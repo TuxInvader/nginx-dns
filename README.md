@@ -31,9 +31,10 @@ NGINX can act as a DNS(TCP) <-> DNS over TLS (DoT) gateway without any NJS funct
 NJS is required if you want to act as a gateway between DoH and DNS/DoT. In this case we need the NJS, and the
 full configuration in nginx-glb.conf. 
 
-We have a HTTP/2 service listening for requests to /dns-query. We then proxy to a stream service internally which
-uses js_filter to pull out the DNS packet from the HTTP wrapper, and forward onto DNS-TCP or a DoT server. The result
-is then wrapped back up in a HTTP/1.0 response and passed to the HTTP/2 service for delivery to the client.
+The full configuration has a HTTP/2 service listening for requests, and does a proxy_pass for requests to /dns-query. 
+We proxy to an internal stream service on port 8053, which uses js_filter to pull out the DNS packet from the HTTP wrapper,
+and forward onto an upstream DNS(TCP) or DoT server.
+The result is then wrapped back up in a HTTP response and passed to the HTTP/2 service for delivery to the client.
 
 NGINX can log as much or as little as you like, and the NJS allows you to process information in the DNS requests and
 responses.
