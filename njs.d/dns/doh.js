@@ -1,6 +1,15 @@
 import dns from "dns.js";
 export default {get_dns_name, filter_request};
 
+/**
+ * DNS Decode Level
+ * 0: No decoding, minimal processing required to strip packet from HTTP wrapper (fastest)
+ * 1: Parse DNS Header and Question. We can log the Question, Class, Type, and Result Code
+ * 2: As 1, but also parse answers. We can log the answers, and also cache responses in HTTP Content-Cache
+ * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
+**/
+var dns_decode_level = 2;
+
 var dns_name = String.bytesFrom([]);
 
 function get_dns_name(s) {
@@ -12,33 +21,40 @@ function to_bytes( number ) {
   return String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) ).toBytes();
 }
 
+function debug(s, msg) {
+  if ( dns_decode_level >= 3 ) {
+    s.warn(msg);
+  }
+}
+
 function filter_request(s) {
   s.on("upload", function(data,flags) {
     if ( data.length == 0 ) {
       return;
     }
     data.split("\r\n").forEach( function(line) {
+      var bytes;
+      var packet;
+
       if ( line.toString('hex').startsWith( '0000') ) {
-        s.warn( "Received: " + line.toString('hex') );
-        var packet = dns.parse_packet(line);
-        s.warn( "ID: " + packet.id );
-        dns.parse_question(packet);
-        s.warn("Name: " + packet.question.name);
-        dns_name = packet.question.name;
-        s.send( to_bytes(line.length) );
-        s.send( line );
+        bytes = line;
       } else if ( line.toString().startsWith("GET /dns-query?dns=") ) {
-        var bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.0".length), "base64url");
-        s.warn( "Received: " + bytes.toString('hex') );
-        var packet = dns.parse_packet(bytes);
-        s.warn( "ID: " + packet.id );
-        dns.parse_question(packet);
-        s.warn("Name: " + packet.question.name);
-        dns_name = packet.question.name;
+        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.0".length), "base64url");
+      } 
+
+      if (bytes) {
+        debug(s, "DNS Req: " + bytes.toString('hex') );
+        if ( dns_decode_level >= 3 ) {
+          packet = dns.parse_packet(bytes);
+          debug(s, "DNS Req ID: " + packet.id );
+          dns.parse_question(packet);
+          debug(s,"DNS Req Name: " + packet.question.name);
+          dns_name = packet.question.name;
+        }
         s.send( to_bytes(bytes.length) );
         s.send( bytes );
       } else {
-        s.warn( "Received: " + line.toString() );
+        debug(s, "DNS Req: " + line.toString() );
         s.send("");
         data = "";
       }
@@ -51,35 +67,50 @@ function filter_request(s) {
     }
     // Drop the TCP length field
     data = data.slice(2);
-    var packet = dns.parse_packet(data);
+
+    debug(s, "DNS Res: " + data.toString('hex') );
+    var packet;
     var answers = "";
-    dns.parse_complete(packet, 2);
-    s.warn( "DNS: " + data.toString('hex') );
-    s.warn( "DNS: Answers: " + packet.an );
-    s.warn( "DNS: Packet: " + JSON.stringify( Object.entries(packet)) );
-    //s.warn( JSON.stringify( Object.entries(packet.question)) );
-    //s.warn( JSON.stringify( Object.entries(packet.answers)) );
+    var cache_time = 10;
     s.send("HTTP/1.0 200\r\nConnection: Close\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
-    if ( "min_ttl" in packet ) {
-      var d = new Date( Date.now() + (packet.min_ttl*1000) ).toUTCString();
-      if ( ! d.includes(",") ) {
-        d = d.split(" ")
-        d = [d[0] + ',', d[2], d[1], d[3], d[4], d[5]].join(" ");
+    if ( dns_decode_level > 0 ) {
+      packet = dns.parse_packet(data);
+      dns.parse_question(packet);
+      dns_name = packet.question.name;
+      s.send("X-DNS-Question: " + dns_name + "\r\n");
+      s.send("X-DNS-Type: " + dns.dns_type.value[packet.question.type] + "\r\n");
+      s.send("X-DNS-Result: " + dns.dns_codes.value[packet.codes & 0x0f] + "\r\n");
+    } 
+    if ( dns_decode_level > 1 ) {
+      if ( dns_decode_level == 2  ) {
+        dns.parse_answers(packet, 2);
+      } else if ( dns_decode_level > 2 ) { 
+        dns.parse_complete(packet, 2);
       }
-      s.send("Cache-Control: public, max-age=" + packet.min_ttl + "\r\n" );
-      s.send("Expires: " + d + "\r\n" );
+      debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
+      if ( "min_ttl" in packet ) {
+        cache_time = packet.min_ttl;
+        s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
+      }
+
+      if ( packet.an > 0 ) {
+        packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
+        answers.slice(0,-1);
+      } else {
+        answers = "[]";
+      }
+      s.send("X-DNS-Answers: " +  answers + "\r\n");
     }
-    if ( packet.an > 0 ) {
-      packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
-      answers.slice(0,-1);
-    } else {
-      answers = "[]";
+
+    debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
+    var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
+    if ( ! d.includes(",") ) {
+      d = d.split(" ")
+      d = [d[0] + ',', d[2], d[1], d[3], d[4], d[5]].join(" ");
     }
-    s.send("X-DNS-Question: " + dns_name + "\r\n");
-    s.send("X-DNS-Type: " + dns.dns_type.value[packet.question.type] + "\r\n");
-    s.send("X-DNS-Result: " + dns.dns_codes.value[packet.codes & 0x0f] + "\r\n");
-    s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
-    s.send("X-DNS-Answers: " +  answers + "\r\n");
+    s.send("Cache-Control: public, max-age=" + cache_time + "\r\n" );
+    s.send("Expires: " + d + "\r\n" );
+
     s.send("\r\n");
     s.send(data);
     s.done();
