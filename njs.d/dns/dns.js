@@ -195,6 +195,11 @@ function parse_answers(packet, decode_level) {
     packet.answers = parse_section(packet, packet.an, decode_level);
   }
 
+  // If we didn't have any ttls in the packet, then cache for 5 minutes.
+  if (packet.min_ttl == 2147483647) {
+    packet.min_ttl = 300;
+  }
+
 }
 
 
@@ -221,6 +226,11 @@ function parse_complete(packet, decode_level) {
     packet.additional = parse_section(packet, packet.ar, decode_level);
   }
 
+  // If we didn't have any ttls in the packet, then cache for 5 minutes.
+  if (packet.min_ttl == 2147483647) {
+    packet.min_ttl = 300;
+  }
+
 }
 
 function parse_section(packet, recs, decode_level) {
@@ -231,9 +241,6 @@ function parse_section(packet, recs, decode_level) {
     if ( rec.ttl < packet.min_ttl ) {
       packet.min_ttl = rec.ttl;
     }
-  }
-  if (packet.min_ttl == 2147483647) {
-    packet.min_ttl = 0;
   }
   return rrs;
 }
