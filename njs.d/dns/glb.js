@@ -4,7 +4,7 @@
 
 **/
 
-import dns from "dns.js";
+import dns from "libdns.js";
 export default {get_response, get_edns_subnet, process_request};
 
 // Any encoded response packets for NGINX to send back go here 

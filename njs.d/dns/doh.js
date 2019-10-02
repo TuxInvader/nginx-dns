@@ -1,4 +1,4 @@
-import dns from "dns.js";
+import dns from "libdns.js";
 export default {get_dns_name, filter_request};
 
 /**
