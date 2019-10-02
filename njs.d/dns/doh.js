@@ -8,7 +8,7 @@ export default {get_dns_name, filter_request};
  * 2: As 1, but also parse answers. We can log the answers, and also cache responses in HTTP Content-Cache
  * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
 **/
-var dns_decode_level = 2;
+var dns_decode_level = 3;
 
 var dns_name = String.bytesFrom([]);
 
@@ -39,7 +39,7 @@ function filter_request(s) {
       if ( line.toString('hex').startsWith( '0000') ) {
         bytes = line;
       } else if ( line.toString().startsWith("GET /dns-query?dns=") ) {
-        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.0".length), "base64url");
+        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.1".length), "base64url");
       } 
 
       if (bytes) {
@@ -72,7 +72,7 @@ function filter_request(s) {
     var packet;
     var answers = "";
     var cache_time = 10;
-    s.send("HTTP/1.0 200\r\nConnection: Close\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
     if ( dns_decode_level > 0 ) {
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
@@ -113,7 +113,7 @@ function filter_request(s) {
 
     s.send("\r\n");
     s.send(data);
-    s.done();
+    //s.done();
   });
 }
 
