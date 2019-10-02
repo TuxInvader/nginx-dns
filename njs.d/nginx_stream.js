@@ -1,6 +1,7 @@
 
 import glb from './dns/glb.js';
 import doh from './dns/doh.js';
+import dns from './dns/dns.js';
 
 /**
  *  GLB Functions
@@ -21,6 +22,10 @@ function glb_get_edns_subnet(s) {
   return glb.get_edns_subnet(s);
 }
 
+/**
+ *  DoH Functions
+**/
+
 // DNS over HTTPS gateway - use as js_filter
 function doh_filter_request(s) {
   return doh.filter_request(s);
@@ -30,3 +35,12 @@ function doh_filter_request(s) {
 function doh_get_dns_name(s) {
   return doh.get_dns_name(s);
 }
+
+/**
+ *  DNS Functions
+**/
+
+function dns_filter_udp_request(s) {
+  return dns.filter_udp_request(s);
+}
+
