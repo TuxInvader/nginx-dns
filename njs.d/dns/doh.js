@@ -52,7 +52,7 @@ function filter_request(s) {
           dns_name = packet.question.name;
         }
         s.send( to_bytes(bytes.length) );
-        s.send( bytes );
+        s.send( bytes, {flush: true} );
       } else {
         debug(s, "DNS Req: " + line.toString() );
         s.send("");
@@ -112,8 +112,7 @@ function filter_request(s) {
     s.send("Expires: " + d + "\r\n" );
 
     s.send("\r\n");
-    s.send(data);
-    //s.done();
+    s.send( data, {flush: true} );
   });
 }
 
