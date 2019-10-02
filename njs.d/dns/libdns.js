@@ -417,6 +417,9 @@ function parse_resource_record(packet, decode_level) {
           case dns_type.A:
             resource.data = parse_arpa_v4(packet, resource);
             break;
+          case dns_type.AAAA:
+            resource.data = parse_arpa_v6(packet, resource);
+            break;
           case dns_type.NS:
             resource.data = parse_label(packet);
             break;
@@ -426,11 +429,14 @@ function parse_resource_record(packet, decode_level) {
           case dns_type.SOA:
             resource.data = parse_soa_record(packet);
             break;
+          case dns_type.SRV:
+            resource.data = parse_srv_record(packet);
+            break;
           case dns_type.MX:
-            resource.data = parse_label(packet);
+            resource.data = parse_mx_record(packet);
             break;
           case dns_type.TXT:
-            resource.data = parse_label(packet);
+            resource.data = parse_txt_record(packet, resource.rdlength);
             break;
           default:
             resource.data = packet.data.slice(packet.offset, packet.offset + resource.rdlength);
@@ -448,6 +454,44 @@ function parse_arpa_v4(packet) {
     octet[i] = packet.data.codePointAt(packet.offset++);
   }
   return octet.join(".");
+}
+
+function parse_arpa_v6(packet) {
+  var ipv6 = "";
+  for (var i=0; i<8; i++ ) {
+    var a = packet.data.charCodeAt(packet.offset++).toString(16);
+    var b = packet.data.charCodeAt(packet.offset++).toString(16);
+    ipv6 += a + b + ":";
+  }
+  return ipv6.slice(0,-1);
+}
+
+function parse_txt_record(packet, length) {
+  var txt = [];
+  var pos = 0;
+  while ( pos < length ) {
+    var tl = packet.data.codePointAt(packet.offset++);
+    txt.push( packet.data.slice(packet.offset, packet.offset + tl));
+    pos += tl + 1;
+    packet.offset += tl;
+  }
+  return txt;
+}
+
+function parse_mx_record(packet) {
+  var mx = {};
+  mx.preference = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  mx.exchange = parse_label(packet);
+  return mx;
+}
+
+function parse_srv_record(packet) {
+  var srv = {};
+  srv.priority = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  srv.weight = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  srv.port = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  srv.target = parse_label(packet);
+  return srv;
 }
 
 function parse_soa_record(packet) {
