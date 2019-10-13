@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_dns_name, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
+export default {get_qname, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -19,7 +19,7 @@ var dns_question_balancing = true;
 
 var dns_name = String.bytesFrom([]);
 
-function get_dns_name(s) {
+function get_qname(s) {
   return dns_name;
 }
 
