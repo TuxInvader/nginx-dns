@@ -35,6 +35,14 @@ function dns_preread_doh_request(s) {
   return doh.preread_doh_request(s);
 }
 
+function dns_preread_udp_request(s) {
+  return doh.preread_udp_request(s);
+}
+
+function dns_preread_tcp_request(s) {
+  return doh.preread_tcp_request(s);
+}
+
 // Return the DNS Question
 function doh_get_dns_name(s) {
   return doh.get_dns_name(s);

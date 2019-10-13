@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_dns_name, preread_doh_request, filter_doh_request};
+export default {get_dns_name, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -73,6 +73,45 @@ function process_doh_request(s, decode, filter) {
       }
     });
   });
+}
+
+function process_dns_request(s, decode, filter, tcp) {
+   s.on("upload", function(bytes,flags) {
+    if ( bytes.length == 0 ) {
+      return;
+    }
+    var packet;
+    if (bytes) {
+      if (tcp) {
+        // Drop the TCP length field
+        bytes = bytes.slice(2);
+      }
+      debug(s, "process_dns_request: DNS Req: " + bytes.toString('hex') );
+      if (decode) {
+        packet = dns.parse_packet(bytes);
+        debug(s, "process_dns_request: DNS Req ID: " + packet.id );
+        dns.parse_question(packet);
+        debug(s,"process_dns_request: DNS Req Name: " + packet.question.name);
+        dns_name = packet.question.name;
+      }
+      if (filter) {
+        if (tcp) {
+          s.send( to_bytes(bytes.length) );
+        }
+        s.send( bytes, {flush: true} );
+      } else {
+        s.done();
+      }
+    }
+  });
+}
+
+function preread_udp_request(s) {
+  process_dns_request(s, true, false, false);
+}
+
+function preread_tcp_request(s) {
+  process_dns_request(s, true, false, true);
 }
 
 function preread_doh_request(s) {
