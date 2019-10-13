@@ -27,8 +27,12 @@ function glb_get_edns_subnet(s) {
 **/
 
 // DNS over HTTPS gateway - use as js_filter
-function doh_filter_request(s) {
-  return doh.filter_request(s);
+function dns_filter_doh_request(s) {
+  return doh.filter_doh_request(s);
+}
+
+function dns_preread_doh_request(s) {
+  return doh.preread_doh_request(s);
 }
 
 // Return the DNS Question

@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_dns_name, filter_request};
+export default {get_dns_name, preread_doh_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -9,6 +9,13 @@ export default {get_dns_name, filter_request};
  * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
 **/
 var dns_decode_level = 3;
+
+/**
+ * DNS Question Load Balancing
+ * Set this to true, if you want to pick the upstream pool based on the DNS Question.
+ * Doing so will disable HTTP KeepAlives for DoH so that we can create a new socket for each query
+**/
+var dns_question_balancing = true;
 
 var dns_name = String.bytesFrom([]);
 
@@ -27,7 +34,7 @@ function debug(s, msg) {
   }
 }
 
-function filter_request(s) {
+function process_doh_request(s, decode, filter) {
   s.on("upload", function(data,flags) {
     if ( data.length == 0 ) {
       return;
@@ -43,23 +50,42 @@ function filter_request(s) {
       } 
 
       if (bytes) {
-        debug(s, "DNS Req: " + bytes.toString('hex') );
-        if ( dns_decode_level >= 3 ) {
+        debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
+        if (decode) {
           packet = dns.parse_packet(bytes);
-          debug(s, "DNS Req ID: " + packet.id );
+          debug(s, "process_doh_request: DNS Req ID: " + packet.id );
           dns.parse_question(packet);
-          debug(s,"DNS Req Name: " + packet.question.name);
+          debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
           dns_name = packet.question.name;
         }
-        s.send( to_bytes(bytes.length) );
-        s.send( bytes, {flush: true} );
+        if (filter) {
+          s.send( to_bytes(bytes.length) );
+          s.send( bytes, {flush: true} );
+        } else {
+          s.done();
+        }
       } else {
-        debug(s, "DNS Req: " + line.toString() );
-        s.send("");
-        data = "";
+        if (filter) {
+          debug(s, "process_doh_request: DNS Req: " + line.toString() );
+          s.send("");
+          data = "";
+        }
       }
     });
   });
+}
+
+function preread_doh_request(s) {
+  process_doh_request(s, true, false);
+}
+
+function filter_doh_request(s) {
+
+  if ( dns_decode_level >= 3 ) {
+    process_doh_request(s, true, true);
+  } else {
+    process_doh_request(s, false, true);
+  }
 
   s.on("download", function(data, flags) {
     if ( data.length == 0 ) {
@@ -72,7 +98,11 @@ function filter_request(s) {
     var packet;
     var answers = "";
     var cache_time = 10;
-    s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    if ( dns_question_balancing ) {
+      s.send("HTTP/1.1 200\r\nConnection: Close\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    } else {
+      s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    }
     if ( dns_decode_level > 0 ) {
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
@@ -113,6 +143,9 @@ function filter_request(s) {
 
     s.send("\r\n");
     s.send( data, {flush: true} );
+    if ( dns_question_balancing ) {
+      s.done();
+    }
   });
 }
 
