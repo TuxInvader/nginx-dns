@@ -1,51 +1,26 @@
 import dns from "libdns.js";
-export default {filter_udp_request};
+export default {get_dns_name, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
 
 /**
  * DNS Decode Level
- * 0: No decoding.
+ * 0: No decoding, minimal processing required to strip packet from HTTP wrapper (fastest)
  * 1: Parse DNS Header and Question. We can log the Question, Class, Type, and Result Code
  * 2: As 1, but also parse answers. We can log the answers, and also cache responses in HTTP Content-Cache
  * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
 **/
 var dns_decode_level = 3;
 
-var dns_question = String.bytesFrom([]);
-var packet;
+/**
+ * DNS Question Load Balancing
+ * Set this to true, if you want to pick the upstream pool based on the DNS Question.
+ * Doing so will disable HTTP KeepAlives for DoH so that we can create a new socket for each query
+**/
+var dns_question_balancing = true;
 
-function get_dns_question(s) {
-  return dns_question;
-}
+var dns_name = String.bytesFrom([]);
 
-function get_dns_type(s) {
-  if ( packet ) {
-    return dns.dns_type.value[packet.question.type];
-  }
-}
-
-function get_dns_result(s) {
-  if ( packet ) {
-    return dns.dns_codes.value[packet.codes & 0x0f];
-  }
-}
-
-function get_dns_answers(s) {
-  var answers = "[]";
-  if ( packet ) {
-    if ( packet.an > 0 ) {
-      packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
-      answers.slice(0,-1);
-    } 
-  }
-  return answers;
-}
-
-function get_dns_min_ttl(s) {
-  if ( "min_ttl" in packet ) {
-    return packet.min_ttl;
-  } else {
-    return 2147483647;
-  }
+function get_dns_name(s) {
+  return dns_name;
 }
 
 // Encode the given number to two bytes (16 bit)
@@ -59,47 +34,121 @@ function debug(s, msg) {
   }
 }
 
-function filter_udp_request(s) {
-
+function process_doh_request(s, decode, filter) {
   s.on("upload", function(data,flags) {
     if ( data.length == 0 ) {
       return;
     }
-    var bytes = data;
-    var packet;
+    data.split("\r\n").forEach( function(line) {
+      var bytes;
+      var packet;
 
-    if (bytes) {
-      debug(s, "DNS Req: " + bytes.toString('hex') );
-      if ( dns_decode_level >= 1 ) {
-        packet = dns.parse_packet(bytes);
-        debug(s, "DNS Req ID: " + packet.id );
-        dns.parse_question(packet);
-        debug(s,"DNS Req Name: " + packet.question.name);
-        dns_question = packet.question.name;
+      if ( line.toString('hex').startsWith( '0000') ) {
+        bytes = line;
+      } else if ( line.toString().startsWith("GET /dns-query?dns=") ) {
+        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.1".length), "base64url");
+      } 
+
+      if (bytes) {
+        debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
+        if (decode) {
+          packet = dns.parse_packet(bytes);
+          debug(s, "process_doh_request: DNS Req ID: " + packet.id );
+          dns.parse_question(packet);
+          debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
+          dns_name = packet.question.name;
+        }
+        if (filter) {
+          s.send( to_bytes(bytes.length) );
+          s.send( bytes, {flush: true} );
+        } else {
+          s.done();
+        }
+      } else {
+        if (filter) {
+          debug(s, "process_doh_request: DNS Req: " + line.toString() );
+          s.send("");
+          data = "";
+        }
       }
-      //s.send( to_bytes(bytes.length) );
-      s.send( bytes );
-    } else {
-      debug(s, "DNS Req: " + line.toString() );
-      s.send("");
-      data = "";
+    });
+  });
+}
+
+function process_dns_request(s, decode, filter, tcp) {
+   s.on("upload", function(bytes,flags) {
+    if ( bytes.length == 0 ) {
+      return;
+    }
+    var packet;
+    if (bytes) {
+      if (tcp) {
+        // Drop the TCP length field
+        bytes = bytes.slice(2);
+      }
+      debug(s, "process_dns_request: DNS Req: " + bytes.toString('hex') );
+      if (decode) {
+        packet = dns.parse_packet(bytes);
+        debug(s, "process_dns_request: DNS Req ID: " + packet.id );
+        dns.parse_question(packet);
+        debug(s,"process_dns_request: DNS Req Name: " + packet.question.name);
+        dns_name = packet.question.name;
+      }
+      if (filter) {
+        if (tcp) {
+          s.send( to_bytes(bytes.length) );
+        }
+        s.send( bytes, {flush: true} );
+      } else {
+        s.done();
+      }
     }
   });
+}
+
+function preread_udp_request(s) {
+  process_dns_request(s, true, false, false);
+}
+
+function preread_tcp_request(s) {
+  process_dns_request(s, true, false, true);
+}
+
+function preread_doh_request(s) {
+  process_doh_request(s, true, false);
+}
+
+function filter_doh_request(s) {
+
+  if ( dns_decode_level >= 3 ) {
+    process_doh_request(s, true, true);
+  } else {
+    process_doh_request(s, false, true);
+  }
 
   s.on("download", function(data, flags) {
     if ( data.length == 0 ) {
       return;
     }
     // Drop the TCP length field
-    //data = data.slice(2);
+    data = data.slice(2);
 
     debug(s, "DNS Res: " + data.toString('hex') );
     var packet;
     var answers = "";
+    var cache_time = 10;
+    if ( dns_question_balancing ) {
+      s.send("HTTP/1.1 200\r\nConnection: Close\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    } else {
+      s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
+    }
     if ( dns_decode_level > 0 ) {
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
-      dns_question = packet.question.name;
+      dns_name = packet.question.name;
+      s.send("X-DNS-Question: " + dns_name + "\r\n");
+      s.send("X-DNS-Type: " + dns.dns_type.value[packet.question.type] + "\r\n");
+      s.send("X-DNS-Result: " + dns.dns_codes.value[packet.codes & 0x0f] + "\r\n");
     } 
     if ( dns_decode_level > 1 ) {
       if ( dns_decode_level == 2  ) {
@@ -108,11 +157,34 @@ function filter_udp_request(s) {
         dns.parse_complete(packet, 2);
       }
       debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
+      if ( "min_ttl" in packet ) {
+        cache_time = packet.min_ttl;
+        s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
+      }
+
+      if ( packet.an > 0 ) {
+        packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
+        answers.slice(0,-1);
+      } else {
+        answers = "[]";
+      }
+      s.send("X-DNS-Answers: " +  answers + "\r\n");
     }
 
-    //debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
-    s.send(data);
-    s.done();
+    debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
+    var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
+    if ( ! d.includes(",") ) {
+      d = d.split(" ")
+      d = [d[0] + ',', d[2], d[1], d[3], d[4], d[5]].join(" ");
+    }
+    s.send("Cache-Control: public, max-age=" + cache_time + "\r\n" );
+    s.send("Expires: " + d + "\r\n" );
+
+    s.send("\r\n");
+    s.send( data, {flush: true} );
+    if ( dns_question_balancing ) {
+      s.done();
+    }
   });
 }
 
