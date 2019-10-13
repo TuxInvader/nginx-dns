@@ -8,14 +8,14 @@ export default {get_qname, preread_doh_request, preread_udp_request, preread_tcp
  * 2: As 1, but also parse answers. We can log the answers, and also cache responses in HTTP Content-Cache
  * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
 **/
-var dns_decode_level = 3;
+var dns_decode_level = 2;
 
 /**
  * DNS Question Load Balancing
  * Set this to true, if you want to pick the upstream pool based on the DNS Question.
  * Doing so will disable HTTP KeepAlives for DoH so that we can create a new socket for each query
 **/
-var dns_question_balancing = true;
+var dns_question_balancing = false;
 
 var dns_name = String.bytesFrom([]);
 
