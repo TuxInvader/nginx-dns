@@ -1,4 +1,4 @@
-# NGINX DNS 
+# NGINX DNS (DNS/DoT/DoH)
 
 This repository contains some NJS code, and example configuration files for using NGINX with DNS services.
 NGINX can be used to perform load balancing for DNS (TCP/UDP), and also DNS over TLS (DoT) and DNS over HTTPS (DoH)
