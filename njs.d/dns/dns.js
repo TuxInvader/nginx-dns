@@ -117,9 +117,14 @@ function process_dns_request(s, decode, filter, tcp) {
 }
 
 function domain_scrub(s, data, packet) {
-  if ( s.variables.server_port == 9953 || s.variables.server_port == 9853 ) {
+  if ( s.variables.server_port == 9953 ) {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
     dns_response = dns.shortcut_nxdomain(data, packet);
+    debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
+  } else if ( s.variables.server_port == 9853 ) {
+    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
+    var answers = [ {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } ];
+    dns_response = dns.shortcut_response(data, packet, answers);
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
