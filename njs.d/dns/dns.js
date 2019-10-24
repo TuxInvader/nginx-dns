@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_qname, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
+export default {get_qname, get_response, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -8,7 +8,7 @@ export default {get_qname, preread_doh_request, preread_udp_request, preread_tcp
  * 2: As 1, but also parse answers. We can log the answers, and also cache responses in HTTP Content-Cache
  * 3: Very Verbose, log everything as above, but also write packet data to error log (slowest)
 **/
-var dns_decode_level = 2;
+var dns_decode_level = 3;
 
 /**
  * DNS Question Load Balancing
@@ -17,10 +17,18 @@ var dns_decode_level = 2;
 **/
 var dns_question_balancing = false;
 
+// The DNS Question name
 var dns_name = String.bytesFrom([]);
 
 function get_qname(s) {
   return dns_name;
+}
+
+// The Optional DNS response, this is set when we want to block a specific domain
+var dns_response = String.bytesFrom([]);
+
+function get_response(s) {
+  return dns_response.toString();
 }
 
 // Encode the given number to two bytes (16 bit)
@@ -62,6 +70,7 @@ function process_doh_request(s, decode, filter) {
           s.send( to_bytes(bytes.length) );
           s.send( bytes, {flush: true} );
         } else {
+          domain_scrub(s, bytes, packet);
           s.done();
         }
       } else {
@@ -100,10 +109,34 @@ function process_dns_request(s, decode, filter, tcp) {
         }
         s.send( bytes, {flush: true} );
       } else {
+        domain_scrub(s, bytes, packet);
         s.done();
       }
     }
   });
+}
+
+function domain_scrub(s, data, packet) {
+  if ( s.variables.server_port == 9953 || s.variables.server_port == 9853 ) {
+    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
+    dns_response = dns.shortcut_nxdomain(data, packet);
+    debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
+  } else {
+    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
+    ["blocked", "blackhole"].forEach( function( list ) {
+      var blocked = s.variables[ list + "_domains" ];
+      if ( blocked ) {
+        blocked = blocked.split(',');
+        blocked.forEach( function( domain ) {
+          if (packet.question.name.endsWith( domain )) {
+            dns_response = list;
+            debug(s,"Scrubbed: DNS Req Name: " + packet.question.name + ", Reason: " + list);
+            return;
+          }
+        });
+      }
+    });
+  }
 }
 
 function preread_udp_request(s) {

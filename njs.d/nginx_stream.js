@@ -22,7 +22,7 @@ function glb_get_edns_subnet(s) {
 }
 
 /**
- *  DoH Functions
+ *  DNS Functions
 **/
 
 // DNS over HTTPS gateway - use as js_filter
@@ -45,6 +45,11 @@ function dns_preread_tcp_request(s) {
 // Return the DNS Question
 function dns_get_qname(s) {
   return dns.get_qname(s);
+}
+
+// return the DNS Response, if we want to override (block) the domain
+function dns_get_response(s) {
+  return dns.get_response(s);
 }
 
 //function dns_filter_udp_request(s) {

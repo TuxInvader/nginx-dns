@@ -7,7 +7,8 @@
 export default {dns_type, dns_class, dns_flags, dns_codes, 
                 parse_packet, parse_question, parse_answers, 
                 parse_complete, parse_resource_record,
-                shortcut_response, gen_new_packet, gen_response_packet, encode_packet}
+                shortcut_response, shortcut_nxdomain,
+                gen_new_packet, gen_response_packet, encode_packet}
 
 // DNS Types
 var dns_type = Object.freeze({
@@ -131,19 +132,32 @@ function encode_packet( packet ) {
  *  and cannibalise the original request to generate our response.
 **/
 function shortcut_response(data, packet, answers) {
-      var response = String.bytesFrom([]);
-      response += data.slice(0, 2);
-      response += String.fromCodePoint( packet.flags |= dns_flags.AA + dns_flags.QR ).toBytes();
-      response += String.fromCodePoint( packet.codes ).toBytes();
-      response += to_bytes( 1 ); // Questions
-      response += to_bytes( answers.length ); // Answers
-      response += to_bytes( 0 ); // Authority
-      response += to_bytes( 0 ); // Additional
-      response += data.slice(12, packet.question.qend );
-      answers.forEach( function(answer) {
-        response += gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata);
-      });
-      return response;
+  var response = String.bytesFrom([]);
+  response += data.slice(0, 2);
+  response += String.fromCodePoint( packet.flags |= dns_flags.AA + dns_flags.QR ).toBytes();
+  response += String.fromCodePoint( packet.codes ).toBytes();
+  response += to_bytes( 1 ); // Questions
+  response += to_bytes( answers.length ); // Answers
+  response += to_bytes( 0 ); // Authority
+  response += to_bytes( 0 ); // Additional
+  response += data.slice(12, packet.question.qend );
+  answers.forEach( function(answer) {
+    response += gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata);
+  });
+  return response;
+}
+
+function shortcut_nxdomain(data, packet) {
+  var response = String.bytesFrom([]);
+  response += data.slice(0,2);
+  response += String.fromCodePoint( packet.flags |= dns_flags.AA + dns_flags.QR ).toBytes();
+  response += String.fromCodePoint( packet.codes |= dns_codes.NXDOMAIN ).toBytes();
+  response += to_bytes( 1 ); // Questions
+  response += to_bytes( 0 ); // Answers
+  response += to_bytes( 0 ); // Authority
+  response += to_bytes( 0 ); // Additional
+  response += data.slice(12, packet.question.qend );
+  return response;
 }
 
 /** Encode a question object into a bytestring suitable for use in a UDP packet
