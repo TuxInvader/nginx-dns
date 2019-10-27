@@ -304,15 +304,6 @@ function parse_label(packet) {
   return name;
 }
  
-
-function gen_arpa_v4( ipv4 ) {
-  var rdata = "";
-  ipv4.split('\.').forEach( function(octet) {
-    rdata += String.fromCodePoint( octet ).toBytes();
-  });
-  return rdata;
-}
-
 /** TODO Check sizes on resources/packets
 labels          63 octets or less
 names           255 octets or less
@@ -354,32 +345,28 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
     resource += gen_resource_label(name);
   }
   
+  resource += String.fromCodePoint(type & 0xff00, type & 0xff);
   switch(type) {
     case dns_type.A:
-      resource += String.fromCodePoint(0,1).toBytes();
-      record = gen_arpa_v4(rdata);
-      break;
-    case dns_type.NS:
-      resource += String.fromCodePoint(0,2).toBytes();
-      break;
-    case dns_type.CNAME:
-      resource += String.fromCodePoint(0,5).toBytes();
-      break;
-    case dns_type.SOA:
-      resource += String.fromCodePoint(0,6).toBytes();
-      break;
-    case dns_type.MX:
-      resource += String.fromCodePoint(0,15).toBytes();
-      break;
-    case dns_type.TXT:
-      resource += String.fromCodePoint(0,16).toBytes();
+      record = encode_arpa_v4(rdata);
       break;
     case dns_type.AAAA:
-      resource += String.fromCodePoint(0,28).toBytes();
+      record = encode_arpa_v6(rdata);
+      break;
+    case dns_type.NS:
+      break;
+    case dns_type.CNAME:
+      break;
+    case dns_type.SOA:
+      break;
+    case dns_type.MX:
+      break;
+    case dns_type.TXT:
+      break;
+    case dns_type.AAAA:
       break;
     default:
       //TODO Barf
-      resource += String.fromCodePoint(99,99).toBytes();
   }
 
   switch(clss) {
@@ -462,12 +449,30 @@ function parse_resource_record(packet, decode_level) {
   return resource;
 }
 
+function encode_arpa_v4( ipv4 ) {
+  var rdata = "";
+  ipv4.split('\.').forEach( function(octet) {
+    rdata += String.fromCodePoint( octet ).toBytes();
+  });
+  return rdata;
+}
+
 function parse_arpa_v4(packet) {
   var octet = [0,0,0,0];
   for (var i=0; i< 4 ; i++ ) {
     octet[i] = packet.data.codePointAt(packet.offset++);
   }
   return octet.join(".");
+}
+
+function encode_arpa_v6( ipv6 ) {
+  var rdata = "";
+  ipv6.split(':').forEach( function(segment) {
+    rdata += String.bytesFrom(segment[0] + segment[1], 'hex');
+    rdata += String.bytesFrom(segment[2] + segment[3], 'hex');
+    //rdata += String.fromCodePoint(to_int(segment[2], segment[3])).toBytes();
+  });
+  return rdata;
 }
 
 function parse_arpa_v6(packet) {

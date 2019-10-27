@@ -123,7 +123,12 @@ function domain_scrub(s, data, packet) {
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else if ( s.variables.server_port == 9853 ) {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
-    var answers = [ {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } ];
+    var answers = [];
+    if ( packet.question.type == dns.dns_type.A ) {
+      answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } );
+    } else if ( packet.question.type == dns.dns_type.AAAA ) {
+      answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "0000:0000:0000:0000:0000:0000:0000:0000" } );
+    }
     dns_response = dns.shortcut_response(data, packet, answers);
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else {
