@@ -472,7 +472,6 @@ function encode_arpa_v6( ipv6 ) {
   ipv6.split(':').forEach( function(segment) {
     rdata += String.bytesFrom(segment[0] + segment[1], 'hex');
     rdata += String.bytesFrom(segment[2] + segment[3], 'hex');
-    //rdata += String.fromCodePoint(to_int(segment[2], segment[3])).toBytes();
   });
   return rdata;
 }
