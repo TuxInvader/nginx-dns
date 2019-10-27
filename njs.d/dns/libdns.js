@@ -163,7 +163,7 @@ function shortcut_nxdomain(data, packet) {
 /** Encode a question object into a bytestring suitable for use in a UDP packet
 **/
 function encode_question(packet) {
-    var encoded = gen_resource_label(packet.question.name);
+    var encoded = encode_label(packet.question.name);
     encoded += to_bytes(packet.question.type);
     encoded += to_bytes(packet.question.class);
     return encoded;
@@ -311,7 +311,7 @@ TTL             positive values of a signed 32 bit number.
 UDP messages    512 octets or less
 **/
 
-function gen_resource_label( name ) {
+function encode_label( name ) {
 
   var data = String.bytesFrom([]);
   name.split('.').forEach( function(part){
@@ -342,7 +342,7 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
     resource += String.fromCodePoint(192, 12).toBytes();
   } else {
     // gen labels for the name
-    resource += gen_resource_label(name);
+    resource += encode_label(name);
   }
   
   resource += String.fromCodePoint(type & 0xff00, type & 0xff);
@@ -354,8 +354,10 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
       record = encode_arpa_v6(rdata);
       break;
     case dns_type.NS:
+      record = encode_label(rdata);
       break;
     case dns_type.CNAME:
+      record = encode_label(rdata);
       break;
     case dns_type.SOA:
       break;
