@@ -364,8 +364,7 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
     case dns_type.MX:
       break;
     case dns_type.TXT:
-      break;
-    case dns_type.AAAA:
+      record = encode_txt_record(rdata);
       break;
     default:
       //TODO Barf
@@ -484,6 +483,25 @@ function parse_arpa_v6(packet) {
     ipv6 += a + b + ":";
   }
   return ipv6.slice(0,-1);
+}
+
+function encode_txt_record( text_array ) {
+  var rdata = String.bytesFrom([]);
+  text_array.forEach( function(text) {
+    var tl = text.length;
+    if ( tl > 255 ) {
+      for (var i=0 ; i < tl ; i++ ) {
+        var len = (tl > (i+255)) ? 255 : tl - i;
+        rdata += String.fromCodePoint(len).toBytes();
+        rdata += text.slice(i,i+len);
+        i += len;
+      }
+    } else { 
+      rdata += String.fromCodePoint(tl).toBytes();
+      rdata += text;
+    }
+  });
+  return rdata;
 }
 
 function parse_txt_record(packet, length) {
