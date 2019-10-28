@@ -360,8 +360,13 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
       record = encode_label(rdata);
       break;
     case dns_type.SOA:
+      record = encode_soa_record(rdata);
+      break;
+    case dns_type.SRV:
+      record = encode_srv_record(rdata);
       break;
     case dns_type.MX:
+      record = encode_mx_record(rdata);
       break;
     case dns_type.TXT:
       record = encode_txt_record(rdata);
@@ -516,11 +521,27 @@ function parse_txt_record(packet, length) {
   return txt;
 }
 
+function encode_mx_record( mx ) {
+  var rdata = String.bytesFrom([]);
+  rdata += to_bytes( mx.priority );
+  rdata += encode_label( mx.exchange );
+  return rdata;
+}
+
 function parse_mx_record(packet) {
   var mx = {};
-  mx.preference = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  mx.priority = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
   mx.exchange = parse_label(packet);
   return mx;
+}
+
+function encode_srv_record( srv ) {
+  var rdata = String.bytesFrom([]);
+  rdata += to_bytes( srv.priority );
+  rdata += to_bytes( srv.weight );
+  rdata += to_bytes( srv.port );
+  rdata += encode_label( srv.target );
+  return rdata;
 }
 
 function parse_srv_record(packet) {
@@ -530,6 +551,18 @@ function parse_srv_record(packet) {
   srv.port = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
   srv.target = parse_label(packet);
   return srv;
+}
+
+function encode_soa_record( soa ) {
+  var rdata = String.bytesFrom([]);
+  rdata += encode_label(soa.primary);
+  rdata += encode_label(soa.mailbox);
+  rdata += to_bytes32(soa.serial);
+  rdata += to_bytes32(soa.refresh);
+  rdata += to_bytes32(soa.retry);
+  rdata += to_bytes32(soa.expire);
+  rdata += to_bytes32(soa.minTTL);
+  return rdata;
 }
 
 function parse_soa_record(packet) {
