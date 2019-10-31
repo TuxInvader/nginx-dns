@@ -240,9 +240,9 @@ function test_dns_responder(s, data, packet) {
   debug(s,"Testing: DNS Req Name: " + packet.question.name);
   var answers = [];
   if ( packet.question.type == dns.dns_type.A ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } );
+    answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "10.2.3.4" } );
   } else if ( packet.question.type == dns.dns_type.AAAA ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "0000:0000:0000:0000:0000:0000:0000:0000" } );
+    answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "fe80:0002:0003:0004:0005:0006:0007:0008" } );
   } else if ( packet.question.type == dns.dns_type.CNAME ) {
     answers.push( {name: packet.question.name, type: dns.dns_type.CNAME, class: dns.dns_class.IN, ttl: 300, rdata: "www.foo.bar.baz" } );
   } else if ( packet.question.type == dns.dns_type.NS ) {
@@ -258,7 +258,16 @@ function test_dns_responder(s, data, packet) {
   } else if ( packet.question.type == dns.dns_type.SOA ) {
     answers.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} } );
   }
-  dns_response = dns.shortcut_response(data, packet, answers);
+  if ( packet.question.name.endsWith("bar.com") ) {
+    dns_response = dns.shortcut_response(data, packet, answers);
+  } else {
+    packet.flags |= dns.dns_flags.AA | dns.dns_flags.QR;
+    packet.codes |= dns.dns_codes.RA;
+    packet.authority.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} });
+    packet.additional.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns1.foo.bar.baz" } );
+    packet.additional.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns2.foo.bar.baz" } );
+    dns_response = dns.encode_packet(packet);
+  }
   if (s.variables.protocol == "TCP" ) {
     dns_response = to_bytes( dns_response.length ) + dns_response;
   }
