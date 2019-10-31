@@ -237,3 +237,31 @@ function filter_doh_request(s) {
   });
 }
 
+/**
+ *  Function to perform testing of DNS packet generation for various DNS types
+**/
+function test_dns_responder(s, data, packet, tcp) {
+  debug(s,"Testing: DNS Req Name: " + packet.question.name);
+  var answers = [];
+  if ( packet.question.type == dns.dns_type.A ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } );
+  } else if ( packet.question.type == dns.dns_type.AAAA ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "0000:0000:0000:0000:0000:0000:0000:0000" } );
+  } else if ( packet.question.type == dns.dns_type.CNAME ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.CNAME, class: dns.dns_class.IN, ttl: 300, rdata: "www.foo.bar.baz" } );
+  } else if ( packet.question.type == dns.dns_type.NS ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns1.foo.bar.baz" } );
+    answers.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns2.foo.bar.baz" } );
+  } else if ( packet.question.type == dns.dns_type.TXT ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.TXT, class: dns.dns_class.IN, ttl: 300, rdata: ["ns1.foo.bar.baz","1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234567890"] } );
+  } else if ( packet.question.type == dns.dns_type.MX ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.MX, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 1, exchange: "mx1.foo.com"} } );
+    answers.push( {name: packet.question.name, type: dns.dns_type.MX, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 10, exchange: "mx2.foo.com"} } );
+  } else if ( packet.question.type == dns.dns_type.SRV ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.SRV, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 1, weight: 10, port: 443, target: "server1.foo.com"} } );
+  } else if ( packet.question.type == dns.dns_type.SOA ) {
+    answers.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} } );
+  }
+  dns_response = dns.shortcut_response(data, packet, answers);
+  debug(s,"Testing: Response: " + dns_response.toString('hex') );
+}
