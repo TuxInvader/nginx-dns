@@ -134,8 +134,8 @@ function encode_packet( packet ) {
 function shortcut_response(data, packet, answers) {
   var response = String.bytesFrom([]);
   response += data.slice(0, 2);
-  response += String.fromCodePoint( packet.flags |= dns_flags.AA + dns_flags.QR ).toBytes();
-  response += String.fromCodePoint( packet.codes ).toBytes();
+  response += String.fromCodePoint( packet.flags |= dns_flags.AA | dns_flags.QR ).toBytes();
+  response += String.fromCodePoint( packet.codes |= dns_codes.RA ).toBytes();
   response += to_bytes( 1 ); // Questions
   response += to_bytes( answers.length ); // Answers
   response += to_bytes( 0 ); // Authority
@@ -150,8 +150,8 @@ function shortcut_response(data, packet, answers) {
 function shortcut_nxdomain(data, packet) {
   var response = String.bytesFrom([]);
   response += data.slice(0,2);
-  response += String.fromCodePoint( packet.flags |= dns_flags.AA + dns_flags.QR ).toBytes();
-  response += String.fromCodePoint( packet.codes |= dns_codes.NXDOMAIN ).toBytes();
+  response += String.fromCodePoint( packet.flags |= dns_flags.AA | dns_flags.QR ).toBytes();
+  response += String.fromCodePoint( packet.codes |= dns_codes.NXDOMAIN | dns_codes.RA ).toBytes();
   response += to_bytes( 1 ); // Questions
   response += to_bytes( 0 ); // Answers
   response += to_bytes( 0 ); // Authority
