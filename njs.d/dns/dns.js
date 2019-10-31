@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_qname, get_response, preread_doh_request, preread_udp_request, preread_tcp_request, filter_doh_request};
+export default {get_qname, get_response, preread_doh_request, preread_dns_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -84,14 +84,14 @@ function process_doh_request(s, decode, filter) {
   });
 }
 
-function process_dns_request(s, decode, filter, tcp) {
+function process_dns_request(s, decode, filter) {
    s.on("upload", function(bytes,flags) {
     if ( bytes.length == 0 ) {
       return;
     }
     var packet;
     if (bytes) {
-      if (tcp) {
+      if (s.variables.protocol == "TCP") {
         // Drop the TCP length field
         bytes = bytes.slice(2);
       }
@@ -104,7 +104,7 @@ function process_dns_request(s, decode, filter, tcp) {
         dns_name = packet.question.name;
       }
       if (filter) {
-        if (tcp) {
+        if (s.variables.protocol == "TCP") {
           s.send( to_bytes(bytes.length) );
         }
         s.send( bytes, {flush: true} );
@@ -155,12 +155,8 @@ function domain_scrub(s, data, packet) {
   }
 }
 
-function preread_udp_request(s) {
-  process_dns_request(s, true, false, false);
-}
-
-function preread_tcp_request(s) {
-  process_dns_request(s, true, false, true);
+function preread_dns_request(s) {
+  process_dns_request(s, true, false);
 }
 
 function preread_doh_request(s) {
@@ -240,7 +236,7 @@ function filter_doh_request(s) {
 /**
  *  Function to perform testing of DNS packet generation for various DNS types
 **/
-function test_dns_responder(s, data, packet, tcp) {
+function test_dns_responder(s, data, packet) {
   debug(s,"Testing: DNS Req Name: " + packet.question.name);
   var answers = [];
   if ( packet.question.type == dns.dns_type.A ) {
@@ -263,5 +259,8 @@ function test_dns_responder(s, data, packet, tcp) {
     answers.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} } );
   }
   dns_response = dns.shortcut_response(data, packet, answers);
+  if (s.variables.protocol == "TCP" ) {
+    dns_response = to_bytes( dns_response.length ) + dns_response;
+  }
   debug(s,"Testing: Response: " + dns_response.toString('hex') );
 }

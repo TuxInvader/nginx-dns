@@ -58,7 +58,8 @@ stream {
 
   server {
     listen 53 udp;
-    js_preread dns_preread_udp_request;
+    js_preread dns_preread_dns_request;
+    proxy_responses 1;
     proxy_pass $upstream_pool;
   }
 
