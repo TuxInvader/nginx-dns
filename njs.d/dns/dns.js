@@ -120,6 +120,9 @@ function domain_scrub(s, data, packet) {
   if ( s.variables.server_port == 9953 ) {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
     dns_response = dns.shortcut_nxdomain(data, packet);
+    if (s.variables.protocol == "TCP" ) {
+      dns_response = to_bytes( dns_response.length ) + dns_response;
+    }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else if ( s.variables.server_port == 9853 ) {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
@@ -130,6 +133,9 @@ function domain_scrub(s, data, packet) {
       answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "0000:0000:0000:0000:0000:0000:0000:0000" } );
     }
     dns_response = dns.shortcut_response(data, packet, answers);
+    if (s.variables.protocol == "TCP" ) {
+      dns_response = to_bytes( dns_response.length ) + dns_response;
+    }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else {
     debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
