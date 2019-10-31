@@ -118,12 +118,18 @@ function encode_packet( packet ) {
   encoded += String.fromCodePoint( packet.flags ).toBytes();
   encoded += String.fromCodePoint( packet.codes ).toBytes();
   encoded += to_bytes( packet.qd ); // Questions
-  encoded += to_bytes( packet.an ); // Answers
-  encoded += to_bytes( packet.ns ); // Authority
-  encoded += to_bytes( packet.ar ); // Additional
+  encoded += to_bytes( packet.answers.length ); // Answers
+  encoded += to_bytes( packet.authority.length ); // Authority
+  encoded += to_bytes( packet.additional.length ); // Additional
   encoded += encode_question(packet);
   packet.answers.forEach( function(answer) {
-    encoded += gen_resource_record(packet, packet.question.name, dns_type.A, dns_class.IN, 600, "127.0.0.1");
+    encoded += gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata);
+  });
+  packet.authority.forEach( function(rec) {
+    encoded += gen_resource_record(packet, rec.name, rec.type, rec.class, rec.ttl, rec.rdata);
+  });
+  packet.additional.forEach( function(rec) {
+    encoded += gen_resource_record(packet, rec.name, rec.type, rec.class, rec.ttl, rec.rdata);
   });
   return encoded;
 }
