@@ -42,7 +42,7 @@ function debug(s, msg) {
   }
 }
 
-function process_doh_request(s, decode, filter) {
+function process_doh_request(s, decode, scrub) {
   s.on("upload", function(data,flags) {
     if ( data.length == 0 ) {
       return;
@@ -66,15 +66,15 @@ function process_doh_request(s, decode, filter) {
           debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
           dns_name = packet.question.name;
         }
-        if (filter) {
-          s.send( to_bytes(bytes.length) );
-          s.send( bytes, {flush: true} );
-        } else {
+        if (scrub) {
           domain_scrub(s, bytes, packet);
           s.done();
+        } else {
+          s.send( to_bytes(bytes.length) );
+          s.send( bytes, {flush: true} );
         }
       } else {
-        if (filter) {
+        if ( ! scrub) {
           debug(s, "process_doh_request: DNS Req: " + line.toString() );
           s.send("");
           data = "";
@@ -84,7 +84,7 @@ function process_doh_request(s, decode, filter) {
   });
 }
 
-function process_dns_request(s, decode, filter) {
+function process_dns_request(s, decode, scrub) {
    s.on("upload", function(bytes,flags) {
     if ( bytes.length == 0 ) {
       return;
@@ -103,29 +103,28 @@ function process_dns_request(s, decode, filter) {
         debug(s,"process_dns_request: DNS Req Name: " + packet.question.name);
         dns_name = packet.question.name;
       }
-      if (filter) {
+      if (scrub) {
+        domain_scrub(s, bytes, packet);
+        s.done();
+      } else {
         if (s.variables.protocol == "TCP") {
           s.send( to_bytes(bytes.length) );
         }
         s.send( bytes, {flush: true} );
-      } else {
-        domain_scrub(s, bytes, packet);
-        s.done();
       }
     }
   });
 }
 
 function domain_scrub(s, data, packet) {
+  var found = false;
   if ( s.variables.server_port == 9953 ) {
-    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
     dns_response = dns.shortcut_nxdomain(data, packet);
     if (s.variables.protocol == "TCP" ) {
       dns_response = to_bytes( dns_response.length ) + dns_response;
     }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else if ( s.variables.server_port == 9853 ) {
-    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
     var answers = [];
     if ( packet.question.type == dns.dns_type.A ) {
       answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "0.0.0.0" } );
@@ -137,38 +136,48 @@ function domain_scrub(s, data, packet) {
       dns_response = to_bytes( dns_response.length ) + dns_response;
     }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
-  } else {
-    debug(s,"Scrubbing: DNS Req Name: " + packet.question.name);
-    ["blocked", "blackhole"].forEach( function( list ) {
-      var blocked = s.variables[ list + "_domains" ];
-      if ( blocked ) {
-        blocked = blocked.split(',');
-        blocked.forEach( function( domain ) {
-          if (packet.question.name.endsWith( domain )) {
-            dns_response = list;
-            debug(s,"Scrubbed: DNS Req Name: " + packet.question.name + ", Reason: " + list);
-            return;
-          }
-        });
-      }
-    });
+  } else { 
+    debug(s,"Scrubbing: Check: Name: " + packet.question.name );
+    if ( s.variables.scrub_action ) {
+      debug(s, "Scrubbing: Check: EXACT MATCH: Name: " + packet.question.name + ", Action: " + s.variables.scrub_action );
+      dns_response = s.variables.scrub_action;
+      return;
+    } else {
+      ["blocked", "blackhole"].forEach( function( list ) {
+        if(found) { return };
+        var blocked = s.variables[ list + "_domains" ];
+        if ( blocked ) {
+          blocked = blocked.split(',');
+          blocked.forEach( function( domain ) {
+            if (packet.question.name.endsWith( domain )) {
+              debug(s,"Scrubbing: Check: LISTED: Name: " + packet.question.name + ", Action: " + list );
+              dns_response = list;
+              found = true;
+              return;
+            }
+          });
+        }
+      });
+      if(found) { return };
+    }
+    debug(s,"Scrubbing: Check: NOT FOUND: Name: " + packet.question.name);
   }
 }
 
 function preread_dns_request(s) {
-  process_dns_request(s, true, false);
+  process_dns_request(s, true, true);
 }
 
 function preread_doh_request(s) {
-  process_doh_request(s, true, false);
+  process_doh_request(s, true, true);
 }
 
 function filter_doh_request(s) {
 
   if ( dns_decode_level >= 3 ) {
-    process_doh_request(s, true, true);
+    process_doh_request(s, true, false);
   } else {
-    process_doh_request(s, false, true);
+    process_doh_request(s, false, false);
   }
 
   s.on("download", function(data, flags) {
