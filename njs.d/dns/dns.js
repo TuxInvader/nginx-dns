@@ -238,9 +238,9 @@ function filter_doh_request(s) {
         answers = "[]";
       }
       s.send("X-DNS-Answers: " +  answers + "\r\n");
+      debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     }
 
-    debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
     if ( ! d.includes(",") ) {
       d = d.split(" ")
