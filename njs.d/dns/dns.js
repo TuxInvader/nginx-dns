@@ -42,6 +42,21 @@ function debug(s, msg) {
   }
 }
 
+// Get value from queryString
+function getQueryVar(query, key) {
+  var vars = query.split('&');
+  for (var i = 0; i < vars.length; i++) {
+    var pair = vars[i].split('=');
+    if (pair.length < 2) {
+      return '';
+    }
+    if (decodeURIComponent(pair[0]) == key) {
+      return decodeURIComponent(pair[1]);
+    }
+  }
+  return '';
+}
+
 function process_doh_request(s, decode, scrub) {
   s.on("upload", function(data,flags) {
     if ( data.length == 0 ) {
@@ -51,11 +66,11 @@ function process_doh_request(s, decode, scrub) {
       var bytes;
       var packet;
 
-      if ( line.toString('hex').startsWith( '0000') ) {
+      if ( line.toString('hex').startsWith('0000') ) {
         bytes = line;
-      } else if ( line.toString().startsWith("GET /dns-query?dns=") ) {
-        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.1".length), "base64url");
-      } 
+      } else if ( line.toString().startsWith("GET /dns-query?") ) {
+        bytes = String.bytesFrom(getQueryVar(line.toString().slice("GET /dns-query?".length, line.length - " HTTP/1.1".length), 'dns'), 'base64url');
+      }
 
       if (bytes) {
         debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
@@ -223,9 +238,9 @@ function filter_doh_request(s) {
         answers = "[]";
       }
       s.send("X-DNS-Answers: " +  answers + "\r\n");
+      debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     }
 
-    debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
     if ( ! d.includes(",") ) {
       d = d.split(" ")
