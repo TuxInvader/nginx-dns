@@ -196,6 +196,7 @@ function filter_doh_request(s) {
     } else {
       s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
     }
+    
     if ( dns_decode_level > 0 ) {
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
@@ -203,29 +204,30 @@ function filter_doh_request(s) {
       s.send("X-DNS-Question: " + dns_name + "\r\n");
       s.send("X-DNS-Type: " + dns.dns_type.value[packet.question.type] + "\r\n");
       s.send("X-DNS-Result: " + dns.dns_codes.value[packet.codes & 0x0f] + "\r\n");
+   
+      if ( dns_decode_level > 1 ) {
+        if ( dns_decode_level == 2  ) {
+          dns.parse_answers(packet, 2);
+        } else if ( dns_decode_level > 2 ) { 
+          dns.parse_complete(packet, 2);
+        }
+        debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
+        if ( "min_ttl" in packet ) {
+          cache_time = packet.min_ttl;
+          s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
+        }
+
+        if ( packet.an > 0 ) {
+          packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
+          answers.slice(0,-1);
+        } else {
+          answers = "[]";
+        }
+        s.send("X-DNS-Answers: " +  answers + "\r\n");
+      }
+      debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     } 
-    if ( dns_decode_level > 1 ) {
-      if ( dns_decode_level == 2  ) {
-        dns.parse_answers(packet, 2);
-      } else if ( dns_decode_level > 2 ) { 
-        dns.parse_complete(packet, 2);
-      }
-      debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
-      if ( "min_ttl" in packet ) {
-        cache_time = packet.min_ttl;
-        s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
-      }
-
-      if ( packet.an > 0 ) {
-        packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
-        answers.slice(0,-1);
-      } else {
-        answers = "[]";
-      }
-      s.send("X-DNS-Answers: " +  answers + "\r\n");
-    }
-
-    debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
+    
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
     if ( ! d.includes(",") ) {
       d = d.split(" ")
