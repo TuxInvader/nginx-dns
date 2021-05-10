@@ -53,9 +53,18 @@ function process_doh_request(s, decode, scrub) {
 
       if ( line.toString('hex').startsWith( '0000') ) {
         bytes = line;
-      } else if ( line.toString().startsWith("GET /dns-query?dns=") ) {
-        bytes = String.bytesFrom(line.slice("GET /dns-query?dns=".length, line.length - " HTTP/1.1".length), "base64url");
-      } 
+      } else if ( line.toString().startsWith("GET /dns-query?") ) {
+	      var qs = line.slice("GET /dns-query?".length, line.length - " HTTP/1.1".length)
+	      qs = qs.split("&");
+        debug(s, "process_doh_request: QS Params: " + qs );
+	      qs.some( param => {
+	        if ( param.startsWith("dns=") ) {
+            bytes = String.bytesFrom(param.slice(4), "base64url");
+            return true;
+	        }
+	        return false;
+	      });
+      }
 
       if (bytes) {
         debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
