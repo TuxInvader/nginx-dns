@@ -47,49 +47,58 @@ function process_doh_request(s, decode, scrub) {
     if ( data.length == 0 ) {
       return;
     }
-    data.split("\r\n").forEach( function(line) {
-      var bytes;
-      var packet;
+    const lines = data.split("\r\n");
+    var bytes;
+    var packet;
+    if(lines[0].startsWith("GET")) {
+      var line = lines[0];
+      var path = line.split(" ")[1]
+      var params = path.split("?")[1]
+      var qs = params.split("&");
+      debug(s, "process_doh_request: QS Params: " + qs );
+      qs.some( param => {
+        if (param.startsWith("dns=") ) {
+          bytes = String.bytesFrom(param.slice(4), "base64url");
+          return true;
+        }
+        return false;
+      });
+    }
 
-      if ( line.toString('hex').startsWith( '0000') ) {
-        bytes = line;
-      } else if ( line.toString().startsWith("GET /dns-query?") ) {
-	      var qs = line.slice("GET /dns-query?".length, line.length - " HTTP/1.1".length)
-	      qs = qs.split("&");
-        debug(s, "process_doh_request: QS Params: " + qs );
-	      qs.some( param => {
-	        if ( param.startsWith("dns=") ) {
-            bytes = String.bytesFrom(param.slice(4), "base64url");
-            return true;
-	        }
-	        return false;
-	      });
+    if(lines[0].startsWith("POST")) {
+      const index = lines.findIndex(line=>{
+        if(line.length == 0) {
+          return true;
+        }
+      })
+      if(index>0 && lines.length >= index + 1){
+        bytes = lines[index + 1];
       }
+    }
 
-      if (bytes) {
-        debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
-        if (decode) {
-          packet = dns.parse_packet(bytes);
-          debug(s, "process_doh_request: DNS Req ID: " + packet.id );
-          dns.parse_question(packet);
-          debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
-          dns_name = packet.question.name;
-        }
-        if (scrub) {
-          domain_scrub(s, bytes, packet);
-          s.done();
-        } else {
-          s.send( to_bytes(bytes.length) );
-          s.send( bytes, {flush: true} );
-        }
+    if (bytes) {
+      debug(s, "process_doh_request: DNS Req: " + bytes.toString('hex') );
+      if (decode) {
+        packet = dns.parse_packet(bytes);
+        debug(s, "process_doh_request: DNS Req ID: " + packet.id );
+        dns.parse_question(packet);
+        debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
+        dns_name = packet.question.name;
+      }
+      if (scrub) {
+        domain_scrub(s, bytes, packet);
+        s.done();
       } else {
-        if ( ! scrub) {
-          debug(s, "process_doh_request: DNS Req: " + line.toString() );
-          s.send("");
-          data = "";
-        }
+        s.send( to_bytes(bytes.length) );
+        s.send( bytes, {flush: true} );
       }
-    });
+    } else {
+      if ( ! scrub) {
+        debug(s, "process_doh_request: DNS Req: " + line.toString() );
+        s.send("");
+        data = "";
+      }
+    }
   });
 }
 
@@ -145,7 +154,7 @@ function domain_scrub(s, data, packet) {
       dns_response = to_bytes( dns_response.length ) + dns_response;
     }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
-  } else { 
+  } else {
     debug(s,"Scrubbing: Check: Name: " + packet.question.name );
     if ( s.variables.scrub_action ) {
       debug(s, "Scrubbing: Check: EXACT MATCH: Name: " + packet.question.name + ", Action: " + s.variables.scrub_action );
@@ -205,7 +214,7 @@ function filter_doh_request(s) {
     } else {
       s.send("HTTP/1.1 200\r\nConnection: Keep-Alive\r\nKeep-Alive: timeout=60, max=1000\r\nContent-Type: application/dns-message\r\nContent-Length:" + data.length + "\r\n");
     }
-    
+
     if ( dns_decode_level > 0 ) {
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
@@ -213,11 +222,11 @@ function filter_doh_request(s) {
       s.send("X-DNS-Question: " + dns_name + "\r\n");
       s.send("X-DNS-Type: " + dns.dns_type.value[packet.question.type] + "\r\n");
       s.send("X-DNS-Result: " + dns.dns_codes.value[packet.codes & 0x0f] + "\r\n");
-   
+
       if ( dns_decode_level > 1 ) {
         if ( dns_decode_level == 2  ) {
           dns.parse_answers(packet, 2);
-        } else if ( dns_decode_level > 2 ) { 
+        } else if ( dns_decode_level > 2 ) {
           dns.parse_complete(packet, 2);
         }
         debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
@@ -235,8 +244,8 @@ function filter_doh_request(s) {
         s.send("X-DNS-Answers: " +  answers + "\r\n");
       }
       debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
-    } 
-    
+    }
+
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
     if ( ! d.includes(",") ) {
       d = d.split(" ")
