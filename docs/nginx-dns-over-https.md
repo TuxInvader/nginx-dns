@@ -40,7 +40,7 @@ Lets look at the stream service first:
 ```
   server {
     listen 127.0.0.1:8053;
-    js_filter doh_filter_request;
+    js_filter dns_filter_doh_request;
     proxy_ssl on;
     proxy_pass dot;
   }
