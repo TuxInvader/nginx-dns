@@ -39,8 +39,8 @@ To perform DNS routing, you need to make a `js_preread` function call in the ser
 For example:
 ```
 stream {
-  js_include /etc/nginx/njs.d/nginx_stream.js;
-  js_set $dns_qname dns_get_qname;
+  js_import /etc/nginx/njs.d/dns/dns.js;
+  js_set $dns_qname dns.get_qname;
 
   map $dns_qname $upstream_pool {
     hostnames;
@@ -58,7 +58,7 @@ stream {
 
   server {
     listen 53 udp;
-    js_preread dns_preread_dns_request;
+    js_preread dns.preread_dns_request;
     proxy_responses 1;
     proxy_pass $upstream_pool;
   }
