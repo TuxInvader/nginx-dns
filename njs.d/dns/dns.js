@@ -11,6 +11,13 @@ export default {get_qname, get_response, preread_doh_request, preread_dns_reques
 var dns_decode_level = 3;
 
 /**
+ * DNS Debug Level
+ * Specify the decoding level at which we should log packet data to the error log.
+ * Default is level 3 (max decoding)
+**/
+var dns_debug_level = 3;
+
+/**
  * DNS Question Load Balancing
  * Set this to true, if you want to pick the upstream pool based on the DNS Question.
  * Doing so will disable HTTP KeepAlives for DoH so that we can create a new socket for each query
@@ -37,7 +44,7 @@ function to_bytes( number ) {
 }
 
 function debug(s, msg) {
-  if ( dns_decode_level >= 3 ) {
+  if ( dns_decode_level >= dns_debug_level ) {
     s.warn(msg);
   }
 }
@@ -243,7 +250,10 @@ function filter_doh_request(s) {
         }
         s.send("X-DNS-Answers: " +  answers + "\r\n");
       }
-      debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
+      if ( dns_decode_level >= dns_debug_level ) {
+        delete packet.data;
+        debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
+      }
     }
 
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
