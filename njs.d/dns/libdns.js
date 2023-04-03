@@ -22,9 +22,10 @@ var dns_type = Object.freeze({
   AAAA:  28,
   SRV:   33,
   OPT:   41,
+  HTTPS: 65,
   AXFR:  252,
   value: { 1:"A", 2:"NS", 5:"CNAME", 6:"SOA", 12:"PTR", 15:"MX", 16:"TXT",
-           28:"AAAA", 33:"SRV", 41:"OPT", 252:"AXFR" }
+           28:"AAAA", 33:"SRV", 41:"OPT", 65:"HTTPS", 252:"AXFR" }
 });
 
 // DNS Classes
