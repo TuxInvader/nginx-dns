@@ -25,14 +25,14 @@ var dns_debug_level = 3;
 var dns_question_balancing = false;
 
 // The DNS Question name
-var dns_name = String.bytesFrom([]);
+var dns_name = Buffer.alloc(0);
 
 function get_qname(s) {
   return dns_name;
 }
 
 // The Optional DNS response, this is set when we want to block a specific domain
-var dns_response = String.bytesFrom([]);
+var dns_response = Buffer.alloc(0);
 
 function get_response(s) {
   return dns_response.toString();
@@ -40,7 +40,7 @@ function get_response(s) {
 
 // Encode the given number to two bytes (16 bit)
 function to_bytes( number ) {
-  return String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) ).toBytes();
+  return Buffer.from( [ ((number>>8) & 0xff), (number & 0xff) ] );
 }
 
 function debug(s, msg) {
@@ -50,11 +50,12 @@ function debug(s, msg) {
 }
 
 function process_doh_request(s, decode, scrub) {
-  s.on("upload", function(data,flags) {
+  s.on("upstream", function(data,flags) {
     if ( data.length == 0 ) {
       return;
     }
-    const lines = data.split("\r\n");
+    var dataString = data.toString('utf8');
+    const lines = dataString.split("\r\n");
     var bytes;
     var packet;
     if(lines[0].startsWith("GET")) {
@@ -62,10 +63,9 @@ function process_doh_request(s, decode, scrub) {
       var path = line.split(" ")[1]
       var params = path.split("?")[1]
       var qs = params.split("&");
-      debug(s, "process_doh_request: QS Params: " + qs );
       qs.some( param => {
         if (param.startsWith("dns=") ) {
-          bytes = String.bytesFrom(param.slice(4), "base64url");
+          bytes = Buffer.from(param.slice(4), "base64url");
           return true;
         }
         return false;
@@ -79,7 +79,7 @@ function process_doh_request(s, decode, scrub) {
         }
       })
       if(index>0 && lines.length >= index + 1){
-        bytes = lines[index + 1];
+        bytes = Buffer.from(lines[index + 1]);
       }
     }
 
@@ -110,7 +110,7 @@ function process_doh_request(s, decode, scrub) {
 }
 
 function process_dns_request(s, decode, scrub) {
-   s.on("upload", function(bytes,flags) {
+   s.on("upstream", function(bytes,flags) {
     if ( bytes.length == 0 ) {
       return;
     }
@@ -146,7 +146,7 @@ function domain_scrub(s, data, packet) {
   if ( s.variables.server_port == 9953 ) {
     dns_response = dns.shortcut_nxdomain(data, packet);
     if (s.variables.protocol == "TCP" ) {
-      dns_response = to_bytes( dns_response.length ) + dns_response;
+      dns_response = Buffer.concat( [ to_bytes( dns_response.length ), dns_response ]);
     }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else if ( s.variables.server_port == 9853 ) {
@@ -158,7 +158,7 @@ function domain_scrub(s, data, packet) {
     }
     dns_response = dns.shortcut_response(data, packet, answers);
     if (s.variables.protocol == "TCP" ) {
-      dns_response = to_bytes( dns_response.length ) + dns_response;
+      dns_response = Buffer.concat( [ to_bytes( dns_response.length ), dns_response ]);
     }
     debug(s,"Scrubbed: Response: " + dns_response.toString('hex') );
   } else {
@@ -205,7 +205,7 @@ function filter_doh_request(s) {
     process_doh_request(s, false, false);
   }
 
-  s.on("download", function(data, flags) {
+  s.on("downstream", function(data, flags) {
     if ( data.length == 0 ) {
       return;
     }
@@ -236,24 +236,21 @@ function filter_doh_request(s) {
         } else if ( dns_decode_level > 2 ) {
           dns.parse_complete(packet, 2);
         }
-        debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
+        //debug(s, "DNS Res Answers: " + JSON.stringify( Object.entries(packet.answers)) );
         if ( "min_ttl" in packet ) {
           cache_time = packet.min_ttl;
           s.send("X-DNS-TTL: " + packet.min_ttl + "\r\n");
         }
 
         if ( packet.an > 0 ) {
-          packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.data + "]," })
+          packet.answers.forEach( function(r) { answers += "[" + dns.dns_type.value[r.type] + ":" + r.rdata + "]," })
           answers.slice(0,-1);
         } else {
           answers = "[]";
         }
         s.send("X-DNS-Answers: " +  answers + "\r\n");
       }
-      if ( dns_decode_level >= dns_debug_level ) {
-        delete packet.data;
-        debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
-      }
+      debug(s, "DNS Res Packet: " + JSON.stringify( Object.entries(packet)) );
     }
 
     var d = new Date( Date.now() + (cache_time*1000) ).toUTCString();
@@ -272,43 +269,3 @@ function filter_doh_request(s) {
   });
 }
 
-/**
- *  Function to perform testing of DNS packet generation for various DNS types
-**/
-function test_dns_responder(s, data, packet) {
-  debug(s,"Testing: DNS Req Name: " + packet.question.name);
-  var answers = [];
-  if ( packet.question.type == dns.dns_type.A ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.A, class: dns.dns_class.IN, ttl: 300, rdata: "10.2.3.4" } );
-  } else if ( packet.question.type == dns.dns_type.AAAA ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.AAAA, class: dns.dns_class.IN, ttl: 300, rdata: "fe80:0002:0003:0004:0005:0006:0007:0008" } );
-  } else if ( packet.question.type == dns.dns_type.CNAME ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.CNAME, class: dns.dns_class.IN, ttl: 300, rdata: "www.foo.bar.baz" } );
-  } else if ( packet.question.type == dns.dns_type.NS ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns1.foo.bar.baz" } );
-    answers.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns2.foo.bar.baz" } );
-  } else if ( packet.question.type == dns.dns_type.TXT ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.TXT, class: dns.dns_class.IN, ttl: 300, rdata: ["ns1.foo.bar.baz","1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234567890"] } );
-  } else if ( packet.question.type == dns.dns_type.MX ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.MX, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 1, exchange: "mx1.foo.com"} } );
-    answers.push( {name: packet.question.name, type: dns.dns_type.MX, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 10, exchange: "mx2.foo.com"} } );
-  } else if ( packet.question.type == dns.dns_type.SRV ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.SRV, class: dns.dns_class.IN, ttl: 300, rdata: { priority: 1, weight: 10, port: 443, target: "server1.foo.com"} } );
-  } else if ( packet.question.type == dns.dns_type.SOA ) {
-    answers.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} } );
-  }
-  if ( packet.question.name.endsWith("bar.com") ) {
-    dns_response = dns.shortcut_response(data, packet, answers);
-  } else {
-    packet.flags |= dns.dns_flags.AA | dns.dns_flags.QR;
-    packet.codes |= dns.dns_codes.RA;
-    packet.authority.push( {name: packet.question.name, type: dns.dns_type.SOA, class: dns.dns_class.IN, ttl: 300, rdata: { primary: "ns1.foo.com", mailbox: "mb.nginx.com", serial: 2019102801, refresh: 1800, retry: 3600, expire: 826483, minTTL:300} });
-    packet.additional.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns1.foo.bar.baz" } );
-    packet.additional.push( {name: packet.question.name, type: dns.dns_type.NS, class: dns.dns_class.IN, ttl: 300, rdata: "ns2.foo.bar.baz" } );
-    dns_response = dns.encode_packet(packet);
-  }
-  if (s.variables.protocol == "TCP" ) {
-    dns_response = to_bytes( dns_response.length ) + dns_response;
-  }
-  debug(s,"Testing: Response: " + dns_response.toString('hex') );
-}
