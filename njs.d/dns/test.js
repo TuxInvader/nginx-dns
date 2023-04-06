@@ -1,6 +1,6 @@
 
 import dns from "libdns.js";
-export default {test_dns_encoder, test_dns_decoder};
+export default {get_qname, test_dns_encoder, test_dns_decoder};
 
 /**
  * DNS Decode Level
@@ -17,6 +17,13 @@ var dns_decode_level = 3;
  * Default is level 3 (max decoding)
 **/
 var dns_debug_level = 3;
+
+// The DNS Question name
+var dns_name = Buffer.alloc(0);
+
+function get_qname(s) {
+  return dns_name;
+}
 
 // Encode the given number to two bytes (16 bit)
 function to_bytes( number ) {
