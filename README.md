@@ -1,5 +1,8 @@
 # NGINX DNS (DNS/DoT/DoH)
 
+> The `v2` branch is migrating to `Buffers` due to NJS deprecating the `String` byte-array functions.
+> Please test and raise issues if you find them. Thank you!
+
 This repository contains some NJS code, and example configuration files for using NGINX with DNS services.
 NGINX can be used to perform load balancing for DNS (TCP/UDP), and also DNS over TLS (DoT) and DNS over HTTPS (DoH)
 
