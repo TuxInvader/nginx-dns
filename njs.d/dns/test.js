@@ -51,6 +51,7 @@ function test_dns_encoder(s) {
       debug(s, "test_dns: DNS Encoder Req: " + data.toString('hex') );
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
+      dns_name = packet.question.name;
       debug(s, "test_dns: DNS Encoder Request Packet: " + JSON.stringify( Object.entries(packet)) );
       test_result = test_dns_responder(s, data, packet);
       delete packet.data; // remove the data buffer before printing
@@ -78,6 +79,7 @@ function test_dns_decoder(s) {
       debug(s, "test_dns: DNS Decoder Res: " + data.toString('hex') );
       packet = dns.parse_packet(data);
       dns.parse_question(packet);
+      dns_name = packet.question.name;
       dns.parse_complete(packet, 2);
       delete packet.data; // remove the data buffer before printing
       debug(s, "test_dns: DNS Decoder Response Packet: " + JSON.stringify( Object.entries(packet)) );
