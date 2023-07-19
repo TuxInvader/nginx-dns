@@ -43,10 +43,6 @@ function to_bytes( number ) {
   return Buffer.from([ (number >> 8) & 0xff, number & 0xff ]);
 }
 
-function base64UrlToBase64(base64Url) {
-  return base64Url.replace(/-/g, '+').replace(/_/g, '/');
-}
-
 function debug(s, msg) {
   if ( dns_decode_level >= dns_debug_level ) {
     s.warn(msg);
@@ -70,10 +66,7 @@ function process_doh_request(s, decode, scrub) {
       qs.some( param => {
         if (param.startsWith("dns=") ) {
           let buff = Buffer.from(param.slice(4).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-          let bytes = '';
-          for (let i = 0; i < buff.length; i++) {
-              bytes += String.fromCharCode(buff[i]);
-          }
+          bytes = buff.toString('utf8');
           return true;
         }
         return false;
