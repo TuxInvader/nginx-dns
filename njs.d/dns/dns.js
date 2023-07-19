@@ -69,8 +69,11 @@ function process_doh_request(s, decode, scrub) {
       debug(s, "process_doh_request: QS Params: " + qs );
       qs.some( param => {
         if (param.startsWith("dns=") ) {
-          var paramBase64 = base64UrlToBase64(param.slice(4));
-          bytes = Buffer.from(paramBase64, "base64");
+          let buff = Buffer.from(param.slice(4).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+          let bytes = '';
+          for (let i = 0; i < buff.length; i++) {
+              bytes += String.fromCharCode(buff[i]);
+          }
           return true;
         }
         return false;
