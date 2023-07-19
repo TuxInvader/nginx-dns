@@ -25,14 +25,14 @@ var dns_debug_level = 3;
 var dns_question_balancing = false;
 
 // The DNS Question name
-var dns_name = String.bytesFrom([]);
+var dns_name = Buffer.from([]);
 
 function get_qname(s) {
   return dns_name;
 }
 
 // The Optional DNS response, this is set when we want to block a specific domain
-var dns_response = String.bytesFrom([]);
+var dns_response = Buffer.from([]);
 
 function get_response(s) {
   return dns_response.toString();
@@ -40,7 +40,7 @@ function get_response(s) {
 
 // Encode the given number to two bytes (16 bit)
 function to_bytes( number ) {
-  return String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) ).toBytes();
+  return Buffer.from([ (number >> 8) & 0xff, number & 0xff ]);
 }
 
 function debug(s, msg) {
@@ -65,7 +65,8 @@ function process_doh_request(s, decode, scrub) {
       debug(s, "process_doh_request: QS Params: " + qs );
       qs.some( param => {
         if (param.startsWith("dns=") ) {
-          bytes = String.bytesFrom(param.slice(4), "base64url");
+          let buff = Buffer.from(param.slice(4).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+          bytes = buff.toString('utf8');
           return true;
         }
         return false;
