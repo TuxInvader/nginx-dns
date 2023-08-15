@@ -25,14 +25,14 @@ var dns_debug_level = 3;
 var dns_question_balancing = false;
 
 // The DNS Question name
-var dns_name = String.bytesFrom([]);
+var dns_name = '';
 
 function get_qname(s) {
   return dns_name;
 }
 
 // The Optional DNS response, this is set when we want to block a specific domain
-var dns_response = String.bytesFrom([]);
+var dns_response = '';
 
 function get_response(s) {
   return dns_response.toString();
@@ -65,7 +65,7 @@ function process_doh_request(s, decode, scrub) {
       debug(s, "process_doh_request: QS Params: " + qs );
       qs.some( param => {
         if (param.startsWith("dns=") ) {
-          bytes = String.bytesFrom(param.slice(4), "base64url");
+          bytes = Buffer.from(param.slice(4), "base64url").toString();
           return true;
         }
         return false;
