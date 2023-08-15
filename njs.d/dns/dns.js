@@ -40,7 +40,7 @@ function get_response(s) {
 
 // Encode the given number to two bytes (16 bit)
 function to_bytes( number ) {
-  return String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) ).toBytes();
+  return Buffer.from(String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) )).toString();
 }
 
 function debug(s, msg) {
