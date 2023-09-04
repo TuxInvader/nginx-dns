@@ -4,7 +4,7 @@
 
 **/
 
-export default {dns_type, dns_class, dns_flags, dns_codes, 
+export default {dns_type, dns_class, dns_flags, dns_codes,
                 parse_packet, parse_question, parse_answers, 
                 parse_complete, parse_resource_record,
                 shortcut_response, shortcut_nxdomain,
@@ -24,8 +24,9 @@ var dns_type = Object.freeze({
   OPT:   41,
   HTTPS: 65,
   AXFR:  252,
+  ANY:   255,
   value: { 1:"A", 2:"NS", 5:"CNAME", 6:"SOA", 12:"PTR", 15:"MX", 16:"TXT",
-           28:"AAAA", 33:"SRV", 41:"OPT", 65:"HTTPS", 252:"AXFR" }
+           28:"AAAA", 33:"SRV", 41:"OPT", 65:"HTTPS", 252:"AXFR", 255:"ANY" }
 });
 
 // DNS Classes
@@ -59,24 +60,14 @@ var dns_codes = Object.freeze({
   value: { 0x80:"RA", 0x70:"Z", 0x0:"NOERROR", 0x1:"FORMERR", 0x2:"SERVFAIL", 0x3:"NXDOMAIN", 0x4:"NOTIMPL", 0x5:"REFUSED" }
 });
 
-// Convert two bytes in a packet to a 16bit int
-function to_int(A, B) {
-  return (((A & 0xFF) << 8) | (B & 0xFF));
-}
-
-// Convert four bytes in a packet to a 32bit int
-function to_int32(A, B, C, D) {
-  return ( ((A & 0xFF) << 24) | ((B & 0xFF) << 16) | ((C & 0xFF) << 8) | (D & 0xFF) );
-}
-
 // Encode the given number to two bytes (16 bit)
 function to_bytes( number ) {
-  return String.fromCodePoint( ((number>>8) & 0xff), (number & 0xff) ).toBytes();
+  return Buffer.from( [ ((number>>8) & 0xff), (number & 0xff) ] );
 }
 
 // Encode the given number to 4 bytes (32 bit)
 function to_bytes32( number ) {
-  return String.fromCodePoint( (number>>24)&0xff, (number>>16)&0xff, (number>>8)&0xff, number&0xff ).toBytes();
+  return Buffer.from( [ (number>>24)&0xff, (number>>16)&0xff, (number>>8)&0xff, number&0xff ] );
 }
 
 // Create a new empty DNS packet structure
@@ -115,22 +106,22 @@ function gen_response_packet( request, question, answers, authority, additional 
  *  Returns a bytestring suitable for dropping into a UDP packet, or returning to NGINX
 **/
 function encode_packet( packet ) {
-  var encoded = to_bytes( packet.id );
-  encoded += String.fromCodePoint( packet.flags ).toBytes();
-  encoded += String.fromCodePoint( packet.codes ).toBytes();
-  encoded += to_bytes( packet.qd ); // Questions
-  encoded += to_bytes( packet.answers.length ); // Answers
-  encoded += to_bytes( packet.authority.length ); // Authority
-  encoded += to_bytes( packet.additional.length ); // Additional
-  encoded += encode_question(packet);
+  var encoded = Buffer.from( to_bytes( packet.id ) );
+  encoded = Buffer.concat( [ encoded, Buffer.from([ packet.flags ])] );
+  encoded = Buffer.concat( [ encoded, Buffer.from([ packet.codes ])] );
+  encoded = Buffer.concat( [ encoded, Buffer.from( to_bytes( packet.qd ))] ); // Questions
+  encoded = Buffer.concat( [ encoded, Buffer.from( to_bytes( packet.answers.length ))] ); // Answers
+  encoded = Buffer.concat( [ encoded, Buffer.from( to_bytes( packet.authority.length ))] ); // Authority
+  encoded = Buffer.concat( [ encoded, Buffer.from( to_bytes( packet.additional.length ))] ); // Additional
+  encoded = Buffer.concat( [ encoded, encode_question(packet) ]);
   packet.answers.forEach( function(answer) {
-    encoded += gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata);
+    encoded = Buffer.concat( [ encoded, gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata) ]);
   });
-  packet.authority.forEach( function(rec) {
-    encoded += gen_resource_record(packet, rec.name, rec.type, rec.class, rec.ttl, rec.rdata);
+  packet.authority.forEach( function(auth) {
+    encoded = Buffer.concat( [ encoded, gen_resource_record(packet, auth.name, auth.type, auth.class, auth.ttl, auth.rdata)] );
   });
-  packet.additional.forEach( function(rec) {
-    encoded += gen_resource_record(packet, rec.name, rec.type, rec.class, rec.ttl, rec.rdata);
+  packet.additional.forEach( function(adtnl) {
+    encoded = Buffer.concat( [ encoded, gen_resource_record(packet, adtnl.name, adtnl.type, adtnl.class, adtnl.ttl, adtnl.rdata)] );
   });
   return encoded;
 }
@@ -139,40 +130,35 @@ function encode_packet( packet ) {
  *  and cannibalise the original request to generate our response.
 **/
 function shortcut_response(data, packet, answers) {
-  var response = String.bytesFrom([]);
-  response += data.slice(0, 2);
-  response += String.fromCodePoint( packet.flags |= dns_flags.AA | dns_flags.QR ).toBytes();
-  response += String.fromCodePoint( packet.codes |= dns_codes.RA ).toBytes();
-  response += to_bytes( 1 ); // Questions
-  response += to_bytes( answers.length ); // Answers
-  response += to_bytes( 0 ); // Authority
-  response += to_bytes( 0 ); // Additional
-  response += data.slice(12, packet.question.qend );
+  var response = Buffer.alloc(0);
+  response = Buffer.concat( [ response, data.slice(0,2) ] );
+  response = Buffer.concat( [ response, Buffer.from([ (packet.flags |= dns_flags.AA | dns_flags.QR) ])] );
+  response = Buffer.concat( [ response, Buffer.from([ (packet.codes |= dns_codes.RA) ])] );
+  // append counts: qd, answer count, 0 auths, 0 additional
+  response = Buffer.concat( [ response, Buffer.from([ 0x00, 0x01 ]), Buffer.from( to_bytes(answers.length)), Buffer.from( [0x0, 0x0, 0x0, 0x0 ]) ] );
+  response = Buffer.concat( [ response, data.slice(12, packet.question.qend ) ] );
   answers.forEach( function(answer) {
-    response += gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata);
+    response = Buffer.concat( [ response, gen_resource_record(packet, answer.name, answer.type, answer.class, answer.ttl, answer.rdata) ]);
   });
   return response;
 }
 
 function shortcut_nxdomain(data, packet) {
-  var response = String.bytesFrom([]);
-  response += data.slice(0,2);
-  response += String.fromCodePoint( packet.flags |= dns_flags.AA | dns_flags.QR ).toBytes();
-  response += String.fromCodePoint( packet.codes |= dns_codes.NXDOMAIN | dns_codes.RA ).toBytes();
-  response += to_bytes( 1 ); // Questions
-  response += to_bytes( 0 ); // Answers
-  response += to_bytes( 0 ); // Authority
-  response += to_bytes( 0 ); // Additional
-  response += data.slice(12, packet.question.qend );
+  var response = Buffer.alloc(0);
+  response = Buffer.concat( [ response, data.slice(0,2) ] );
+  response = Buffer.concat( [ response, Buffer.from([ (packet.flags |= dns_flags.AA | dns_flags.QR) ])] );
+  response = Buffer.concat( [ response, Buffer.from([ (packet.codes |= dns_codes.NXDOMAIN | dns_codes.RA) ])] );
+  // append counts: qd, answer count, 0 auths, 0 additional
+  response = Buffer.concat( [ response, Buffer.from([ 0x00, 0x01, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]) ] );
+  response = Buffer.concat( [ response, data.slice(12, packet.question.qend ) ] );
   return response;
 }
 
 /** Encode a question object into a bytestring suitable for use in a UDP packet
 **/
 function encode_question(packet) {
-    var encoded = encode_label(packet.question.name);
-    encoded += to_bytes(packet.question.type);
-    encoded += to_bytes(packet.question.class);
+    var encoded = Buffer.from( encode_label(packet.question.name) );
+    encoded = Buffer.concat( [ encoded, Buffer.from(to_bytes(packet.question.type)), Buffer.from(to_bytes(packet.question.class)) ] );
     return encoded;
 }
 
@@ -181,9 +167,9 @@ function encode_question(packet) {
  *  You will probably want to call parse_question() next.
 **/
 function parse_packet(data) {
-  var packet = { id: to_int(data.codePointAt(0), data.codePointAt(1)), flags: data.codePointAt(2), codes: data.codePointAt(3), min_ttl: 2147483647,
-    qd: to_int(data.codePointAt(4), data.codePointAt(5)), an: to_int(data.codePointAt(6), data.codePointAt(7)), ns: to_int(data.codePointAt(8), data.codePointAt(9)),
-    ar: to_int(data.codePointAt(10), data.codePointAt(11)), data: data.slice(12), question: [], answers:[], authority: [], additional: [], offset: 0 };
+  var packet = { id: data.readUInt16BE(0), flags: data[2], codes: data[3], min_ttl: 2147483647,
+    qd: data.readUInt16BE(4), an: data.readUInt16BE(6), ns: data.readUInt16BE(8),
+    ar: data.readUInt16BE(10), data: data.slice(12), question: [], answers:[], authority: [], additional: [], offset: 0 };
   return packet;
 }
 
@@ -196,8 +182,9 @@ function parse_question(packet) {
   /** QNAME, QTYPE, QCLASS **/
 
   var name = parse_label(packet);
-  packet.question = { name: name, type: to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++)), 
-                      class: to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++)), qend: packet.offset + 12 };
+  packet.question = { name: name, type: packet.data.readUInt16BE(packet.offset), 
+                      class: packet.data.readUInt16BE(packet.offset+2), qend: packet.offset + 16 };
+  packet.offset += 4;
   if ( packet.qd != 1 ) {
     return false;
   }
@@ -272,7 +259,7 @@ function parse_label(packet) {
   var compressed = false;
   var pos = packet.offset;
   for ( ; pos < packet.data.length; ) {
-    var length = packet.data.codePointAt(pos);
+    var length = packet.data[pos];
     if (length == 0) {
       // null label, name is finished
       pos++;
@@ -284,7 +271,7 @@ function parse_label(packet) {
       } else {
         packet.offset = ++pos + 1;
       }
-      pos = packet.data.codePointAt(pos);;
+      pos = packet.data[pos];;
       if ( pos < 12 ) {
         // This shouldn't be possible, the header is 12 bytes so a compression pointer can't be less than 12
         //s.warn("DNS Error - parse_label encountered impossible compression pointer");
@@ -320,12 +307,11 @@ UDP messages    512 octets or less
 
 function encode_label( name ) {
 
-  var data = String.bytesFrom([]);
+  var data = Buffer.alloc(0);
   name.split('.').forEach( function(part){
-    data += String.fromCodePoint(part.length);
-    data += part;
+    data = Buffer.concat( [ data, Buffer.from([ part.length ]), Buffer.from(part) ] );
   });
-  data += String.fromCodePoint(0);
+  data = Buffer.concat( [data, Buffer.from([0]) ]);
   return data;
 
 }
@@ -341,18 +327,18 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
     RDATA variable length string
   **/
 
-  var resource = "";
+  var resource
   var record = "";
 
   if ( name == packet.question.name ) {
     // The name matches the query, set a compression pointer.
-    resource += String.fromCodePoint(192, 12).toBytes();
+    resource = Buffer.from([192, 12]);
   } else {
     // gen labels for the name
-    resource += encode_label(name);
+    resource = encode_label(name);
   }
   
-  resource += String.fromCodePoint(type & 0xff00, type & 0xff);
+  resource = Buffer.concat( [ resource, Buffer.from([ type & 0xff00, type & 0xff ]) ]);
   switch(type) {
     case dns_type.A:
       record = encode_arpa_v4(rdata);
@@ -384,16 +370,16 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
 
   switch(clss) {
     case dns_class.IN:
-      resource += String.fromCodePoint(0,1).toBytes();
+      resource = Buffer.concat([ resource, Buffer.from( [ 0, 1 ] )]);
       break;
     default:
       //TODO Barf
-      resource += String.fromCodePoint(99,99).toBytes();
+      resource = Buffer.concat([ resource, Buffer.from( [ 99, 99 ] )]);
   }
 
-  resource += to_bytes32(ttl);
-  resource += to_bytes( record.length );
-  resource += record;
+  resource = Buffer.concat( [ resource, Buffer.from(to_bytes32(ttl)) ] );
+  resource = Buffer.concat( [ resource, Buffer.from(to_bytes( record.length )) ] );
+  resource = Buffer.concat( [ resource, Buffer.from(record) ] );
   return resource;
 }
 
@@ -412,48 +398,49 @@ function parse_resource_record(packet, decode_level) {
 
   var resource = {}
   resource.name = parse_label(packet);
-  resource.type = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  resource.type = packet.data.readUInt16BE(packet.offset);
+  packet.offset += 2;
 
   if ( decode_level > 0 ) {
     if (resource.type == dns_type.OPT ) {
       // EDNS
       parse_edns_options(packet);
     } else {
-      resource.class = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-      resource.ttl = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-                              packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-      resource.rdlength = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+      resource.class = packet.data.readUInt16BE(packet.offset);
+      resource.ttl = packet.data.readUInt32BE(packet.offset+2);
+      resource.rdlength = packet.data.readUInt16BE(packet.offset+6);
+      packet.offset +=8;
       if ( decode_level == 1 ) {
-        resource.data = packet.data.slice(packet.offset, packet.offset + resource.rdlength);
+        resource.rdata = packet.data.slice(packet.offset, packet.offset + resource.rdlength);
         packet.offset += resource.rdlength;
       } else {
         switch(resource.type) {
           case dns_type.A:
-            resource.data = parse_arpa_v4(packet, resource);
+            resource.rdata = parse_arpa_v4(packet, resource);
             break;
           case dns_type.AAAA:
-            resource.data = parse_arpa_v6(packet, resource);
+            resource.rdata = parse_arpa_v6(packet, resource);
             break;
           case dns_type.NS:
-            resource.data = parse_label(packet);
+            resource.rdata = parse_label(packet);
             break;
           case dns_type.CNAME:
-            resource.data = parse_label(packet);
+            resource.rdata = parse_label(packet);
             break;
           case dns_type.SOA:
-            resource.data = parse_soa_record(packet);
+            resource.rdata = parse_soa_record(packet);
             break;
           case dns_type.SRV:
-            resource.data = parse_srv_record(packet);
+            resource.rdata = parse_srv_record(packet);
             break;
           case dns_type.MX:
-            resource.data = parse_mx_record(packet);
+            resource.rdata = parse_mx_record(packet);
             break;
           case dns_type.TXT:
-            resource.data = parse_txt_record(packet, resource.rdlength);
+            resource.rdata = parse_txt_record(packet, resource.rdlength);
             break;
           default:
-            resource.data = packet.data.slice(packet.offset, packet.offset + resource.rdlength);
+            resource.rdata = packet.data.slice(packet.offset, packet.offset + resource.rdlength);
             packet.offset += resource.rdlength;
         }
       }
@@ -463,9 +450,10 @@ function parse_resource_record(packet, decode_level) {
 }
 
 function encode_arpa_v4( ipv4 ) {
-  var rdata = "";
+  var rdata = Buffer.alloc(4);
+  var index = 0;
   ipv4.split('\.').forEach( function(octet) {
-    rdata += String.fromCodePoint( octet ).toBytes();
+    rdata[index++] = octet;
   });
   return rdata;
 }
@@ -473,16 +461,16 @@ function encode_arpa_v4( ipv4 ) {
 function parse_arpa_v4(packet) {
   var octet = [0,0,0,0];
   for (var i=0; i< 4 ; i++ ) {
-    octet[i] = packet.data.codePointAt(packet.offset++);
+    octet[i] = packet.data[packet.offset++];
   }
   return octet.join(".");
 }
 
 function encode_arpa_v6( ipv6 ) {
-  var rdata = "";
+  var rdata = Buffer.alloc(0);
   ipv6.split(':').forEach( function(segment) {
-    rdata += String.bytesFrom(segment[0] + segment[1], 'hex');
-    rdata += String.bytesFrom(segment[2] + segment[3], 'hex');
+    rdata = Buffer.concat( [ rdata, Buffer.from( segment[0] + segment[1], 'hex') ] );
+    rdata = Buffer.concat( [ rdata, Buffer.from( segment[2] + segment[3], 'hex') ] );
   });
   return rdata;
 }
@@ -490,27 +478,23 @@ function encode_arpa_v6( ipv6 ) {
 function parse_arpa_v6(packet) {
   var ipv6 = "";
   for (var i=0; i<8; i++ ) {
-    var a = packet.data.charCodeAt(packet.offset++).toString(16);
-    var b = packet.data.charCodeAt(packet.offset++).toString(16);
-    ipv6 += a + b + ":";
+    ipv6 += packet.data.toString('hex', packet.offset++, ++packet.offset) + ":";
   }
   return ipv6.slice(0,-1);
 }
 
 function encode_txt_record( text_array ) {
-  var rdata = String.bytesFrom([]);
+  var rdata = Buffer.alloc(0);
   text_array.forEach( function(text) {
     var tl = text.length;
     if ( tl > 255 ) {
       for (var i=0 ; i < tl ; i++ ) {
         var len = (tl > (i+255)) ? 255 : tl - i;
-        rdata += String.fromCodePoint(len).toBytes();
-        rdata += text.slice(i,i+len);
+        rdata = Buffer.concat( [ rdata, Buffer.from([len]), Buffer.from(text.slice(i,i+len)) ] );
         i += len;
       }
     } else { 
-      rdata += String.fromCodePoint(tl).toBytes();
-      rdata += text;
+      rdata = Buffer.concat( [ rdata, Buffer.from([tl]), Buffer.from(text) ] );
     }
   });
   return rdata;
@@ -520,8 +504,8 @@ function parse_txt_record(packet, length) {
   var txt = [];
   var pos = 0;
   while ( pos < length ) {
-    var tl = packet.data.codePointAt(packet.offset++);
-    txt.push( packet.data.slice(packet.offset, packet.offset + tl));
+    var tl = packet.data[packet.offset++];
+    txt.push( packet.data.toString('utf8', packet.offset, packet.offset + tl));
     pos += tl + 1;
     packet.offset += tl;
   }
@@ -529,7 +513,7 @@ function parse_txt_record(packet, length) {
 }
 
 function encode_mx_record( mx ) {
-  var rdata = String.bytesFrom([]);
+  var rdata = Buffer.alloc(0);
   rdata += to_bytes( mx.priority );
   rdata += encode_label( mx.exchange );
   return rdata;
@@ -537,38 +521,36 @@ function encode_mx_record( mx ) {
 
 function parse_mx_record(packet) {
   var mx = {};
-  mx.priority = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  mx.priority = packet.data.readUInt16BE(packet.offset);
+  packet.offset += 2;
   mx.exchange = parse_label(packet);
   return mx;
 }
 
 function encode_srv_record( srv ) {
-  var rdata = String.bytesFrom([]);
-  rdata += to_bytes( srv.priority );
-  rdata += to_bytes( srv.weight );
-  rdata += to_bytes( srv.port );
-  rdata += encode_label( srv.target );
+  var rdata = Buffer.alloc(6)
+  rdata.writeInt16BE( srv.priority, 0 );
+  rdata.writeInt16BE( srv.weight, 2 );
+  rdata.writeInt16BE( srv.port, 4 );
+  rdata = Buffer.concat( [ rdata, encode_label( srv.target ) ]);
+  ngx.log( ngx.WARN, rdata.toString('hex'));
   return rdata;
 }
 
 function parse_srv_record(packet) {
   var srv = {};
-  srv.priority = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  srv.weight = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  srv.port = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  srv.priority = packet.data.readUInt16BE(packet.offset);
+  srv.weight = packet.data.readUInt16BE(packet.offset+2);
+  srv.port = packet.data.readUInt16BE(packet.offset+4);
+  packet.offset += 6;
   srv.target = parse_label(packet);
   return srv;
 }
 
 function encode_soa_record( soa ) {
-  var rdata = String.bytesFrom([]);
-  rdata += encode_label(soa.primary);
-  rdata += encode_label(soa.mailbox);
-  rdata += to_bytes32(soa.serial);
-  rdata += to_bytes32(soa.refresh);
-  rdata += to_bytes32(soa.retry);
-  rdata += to_bytes32(soa.expire);
-  rdata += to_bytes32(soa.minTTL);
+  var rdata = Buffer.concat([ encode_label(soa.primary), encode_label(soa.mailbox) ]);
+  rdata = Buffer.concat( [ rdata, Buffer.from(to_bytes32(soa.serial)), Buffer.from(to_bytes32(soa.refresh)), 
+          Buffer.from(to_bytes32(soa.retry)), Buffer.from(to_bytes32(soa.expire)), Buffer.from(to_bytes32(soa.minTTL)) ]);
   return rdata;
 }
 
@@ -576,16 +558,12 @@ function parse_soa_record(packet) {
   var soa = {};
   soa.primary = parse_label(packet);
   soa.mailbox = parse_label(packet);
-  soa.serial = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-               packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  soa.refresh = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-               packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  soa.retry = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-               packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  soa.expire = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-               packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  soa.minTTL = to_int32(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++),
-               packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  soa.serial  = packet.data.readUInt32BE(packet.offset);
+  soa.refresh = packet.data.readUInt32BE(packet.offset+=4);
+  soa.retry   = packet.data.readUInt32BE(packet.offset+=4);
+  soa.expire  = packet.data.readUInt32BE(packet.offset+=4);
+  soa.minTTL  = packet.data.readUInt32BE(packet.offset+=4);
+  packet.offset +=4;
   return soa;
 }
 
@@ -593,27 +571,30 @@ function parse_edns_options(packet) {
 
   packet.edns = {}
   packet.edns.opts = {}
-  packet.edns.size = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  packet.edns.rcode = packet.data.codePointAt(packet.offset++);
-  packet.edns.version = packet.data.codePointAt(packet.offset++);
-  packet.edns.z = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-  packet.edns.rdlength = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+  packet.edns.size = packet.data.readUInt16BE(packet.offset);
+  packet.edns.rcode = packet.data[packet.offset+2];
+  packet.edns.version = packet.data[packet.offset+3];
+  packet.edns.z = packet.data.readUInt16BE(packet.offset+4);
+  packet.edns.rdlength = packet.data.readUInt16BE(packet.offset+6);
+  packet.offset += 8;
 
   var end = packet.offset + packet.edns.rdlength;
   for ( ; packet.offset < end ; ) {
-    var opcode = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-    var oplength = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
+    var opcode = packet.data.readUInt16BE(packet.offset);
+    var oplength = packet.data.readUInt16BE(packet.offset+2);
+    packet.offset += 4;
     if ( opcode == 8 ) {
       //client subnet
       packet.edns.opts.csubnet = {}
-      packet.edns.opts.csubnet.family = to_int(packet.data.codePointAt(packet.offset++), packet.data.codePointAt(packet.offset++));
-      packet.edns.opts.csubnet.netmask = packet.data.codePointAt(packet.offset++);
-      packet.edns.opts.csubnet.scope = packet.data.codePointAt(packet.offset++);
+      packet.edns.opts.csubnet.family = packet.data.readUInt16BE(packet.offset);
+      packet.edns.opts.csubnet.netmask = packet.data[packet.offset+2];
+      packet.edns.opts.csubnet.scope = packet.data[packet.offset+3];
+      packet.offset += 4;
       if ( packet.edns.opts.csubnet.family == 1 ) {
         // IPv4
         var octet = [0,0,0,0];
         for (var i=4; i< oplength ; i++ ) {
-          octet[i-4] = packet.data.codePointAt(packet.offset++);
+          octet[i-4] = packet.data[packet.offset++];
         }
         packet.edns.opts.csubnet.subnet = octet.join(".");
         break;
