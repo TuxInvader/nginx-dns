@@ -54,15 +54,12 @@ function process_doh_request(s, decode, scrub) {
     if ( data.length == 0 ) {
       return;
     }
-    var dataString = data.toString('utf8');
-    const lines = dataString.split("\r\n");
     var bytes;
     var packet;
-    if(lines[0].startsWith("GET")) {
-      var line = lines[0];
-      var path = line.split(" ")[1]
-      var params = path.split("?")[1]
-      var qs = params.split("&");
+    if(data.toString('utf8', 0, 3) == "GET") {
+      const path = data.toString('utf8', 4, data.indexOf(' ', 4));
+      const params = path.split("?")[1]
+      const qs = params.split("&");
       qs.some( param => {
         if (param.startsWith("dns=") ) {
           bytes = Buffer.from(param.slice(4), "base64url");
@@ -72,15 +69,8 @@ function process_doh_request(s, decode, scrub) {
       });
     }
 
-    if(lines[0].startsWith("POST")) {
-      const index = lines.findIndex(line=>{
-        if(line.length == 0) {
-          return true;
-        }
-      })
-      if(index>0 && lines.length >= index + 1){
-        bytes = Buffer.from(lines[index + 1]);
-      }
+    if(data.toString('utf8', 0, 4) == "POST") {
+      bytes = data.slice(data.indexOf('\r\n\r\n') + 4);
     }
 
     if (bytes) {
