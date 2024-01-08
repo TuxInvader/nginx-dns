@@ -1,5 +1,5 @@
 import dns from "libdns.js";
-export default {get_qname, get_response, preread_doh_request, preread_dns_request, filter_doh_request};
+export default {get_qname, get_client, get_response, preread_doh_request, preread_dns_request, filter_doh_request};
 
 /**
  * DNS Decode Level
@@ -18,6 +18,14 @@ var dns_decode_level = 3;
 var dns_debug_level = 3;
 
 /**
+ * DNS Inject Client
+ * Set this to true if you want to inject the client address into the DNS query.
+ * Doing so will inject the client IP address as CSUBNET in EDNS(0).
+ * With this you can track clients on your DNS server and selectively blocklist.
+ * Some DNS servers like pihole feature client specific blocklists out of the box.
+**/
+var dns_inject_client = false;
+/**
  * DNS Question Load Balancing
  * Set this to true, if you want to pick the upstream pool based on the DNS Question.
  * Doing so will disable HTTP KeepAlives for DoH so that we can create a new socket for each query
@@ -27,8 +35,16 @@ var dns_question_balancing = false;
 // The DNS Question name
 var dns_name = Buffer.alloc(0);
 
+// The DNS client address
+var dns_client_ip;
+
+
 function get_qname(s) {
   return dns_name;
+}
+
+function get_client(s) {
+  return dns_client_ip;
 }
 
 // The Optional DNS response, this is set when we want to block a specific domain
@@ -82,6 +98,15 @@ function process_doh_request(s, decode, scrub) {
         debug(s,"process_doh_request: DNS Req Name: " + packet.question.name);
         dns_name = packet.question.name;
       }
+      if (dns_inject_client) {
+        packet = packet ?? dns.parse_packet(bytes);
+        const index_xforwardedfor = data.indexOf('\r\nX-Forwarded-For: ') + 19;
+        dns_client_ip = data.toString(
+	  'utf8', index_xforwardedfor, data.indexOf('\r\n', index_xforwardedfor)
+	).split(',')[0];
+        debug(s, "process_doh_request: DNS Client IP: \"" + dns_client_ip + "\"");
+        bytes = inject_client(s, bytes, packet, dns_client_ip);
+      }
       if (scrub) {
         domain_scrub(s, bytes, packet);
         s.done();
@@ -117,6 +142,12 @@ function process_dns_request(s, decode, scrub) {
         dns.parse_question(packet);
         debug(s,"process_dns_request: DNS Req Name: " + packet.question.name);
         dns_name = packet.question.name;
+      }
+      if (dns_inject_client) {
+        packet = packet ?? dns.parse_packet(bytes);
+        dns_client_ip = s.variables.remote_addr;
+        debug(s, "process_dns_request: DNS Client IP: \"" + dns_client_ip + "\"");
+        bytes = inject_client(s, bytes, packet, dns_client_ip);
       }
       if (scrub) {
         domain_scrub(s, bytes, packet);
@@ -257,5 +288,35 @@ function filter_doh_request(s) {
       s.done();
     }
   });
+}
+
+/**
+ *  Inject client address as CSUBNET to DNS query
+**/
+function inject_client(s, data, packet, client_ip) {
+
+  dns.parse_complete(packet, 2);
+
+  packet.edns = packet.edns ?? { opts: {} };
+
+  const has_csubnet = 'csubnet' in packet.edns.opts;
+  if ( has_csubnet ) {
+    dns_client_ip = packet.edns.opts.csubnet.subnet + " via " +  dns_client_ip;
+    debug(s, "inject client: query already has CSUBNET: " + packet.edns.opts.csubnet.subnet + "/" + packet.edns.opts.csubnet.netmask);
+  } else {
+    const is_ipv4 = dns.is_ipv4(client_ip);
+    debug(s, "inject_client: injecting client address: " + client_ip);
+    packet.edns.opts.csubnet = {
+      family: (is_ipv4 ? "1" : "2"),
+      netmask: (is_ipv4 ? "32" : "128"),
+      scope: 0,
+      subnet: client_ip
+    };
+    data = dns.encode_packet(packet);
+    debug(s, "inject_client: DNS Request Packet: " + JSON.stringify( Object.entries(packet)) );
+    debug(s, "inject_client: DNS Req: " + data.toString('hex') );
+  }
+
+  return data;
 }
 

@@ -5,13 +5,14 @@
 **/
 
 export default {dns_type, dns_class, dns_flags, dns_codes,
-                parse_packet, parse_question, parse_answers, 
+                edns_opcode, is_ipv4,
+                parse_packet, parse_question, parse_answers,
                 parse_complete, parse_resource_record,
                 shortcut_response, shortcut_nxdomain,
                 gen_new_packet, gen_response_packet, encode_packet}
 
 // DNS Types
-var dns_type = Object.freeze({
+const dns_type = Object.freeze({
   A:     1,
   NS:    2,
   CNAME: 5,
@@ -30,7 +31,7 @@ var dns_type = Object.freeze({
 });
 
 // DNS Classes
-var dns_class = Object.freeze({
+const dns_class = Object.freeze({
   IN: 1,
   CS: 2,
   CH: 3,
@@ -39,7 +40,7 @@ var dns_class = Object.freeze({
 });
 
 // DNS flags (made up of QR, Opcode (4bits), AA, TrunCation, Recursion Desired)
-var dns_flags = Object.freeze({
+const dns_flags = Object.freeze({
   QR: 0x80,
   AA: 0x4,
   TC: 0x2,
@@ -47,7 +48,7 @@ var dns_flags = Object.freeze({
 });
 
 // DNS Codes (made up of RA (Recursion Available), Zero (3bits), Response Code (4bits))
-var dns_codes = Object.freeze({
+const dns_codes = Object.freeze({
   RA:       0x80,
   Z:        0x70,
   //RCODE:    0xf,
@@ -58,6 +59,29 @@ var dns_codes = Object.freeze({
   NOTIMPL:  0x4,
   REFUSED:  0x5,
   value: { 0x80:"RA", 0x70:"Z", 0x0:"NOERROR", 0x1:"FORMERR", 0x2:"SERVFAIL", 0x3:"NXDOMAIN", 0x4:"NOTIMPL", 0x5:"REFUSED" }
+});
+
+// EDNS opcodes (see https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-11)
+const edns_opcode = Object.freeze({
+  LLQ:       1,
+  UL:        2,
+  NSID:      3,
+  DAU:       5,
+  DHU:       6,
+  N3U:       7,
+  CSUBNET:   8,
+  EXPIRE:    9,
+  COOKIE:    10,
+  KEEPALIVE: 11,
+  PADDING:   12,
+  CHAIN:     13,
+  KEYTAG:    14,
+  ERROR:     15,
+  CLIENTTAG: 16,
+  SERVERTAG: 17,
+  UMBRELLA:  20292,
+  DEVICEID:  26946,
+  value: { 1:"LLQ", 2:"UL", 3:"NSID", 5:"DAU", 6:"DHU", 7:"N3U", 8:"CSUBNET", 9:"EXPIRE", 10:"COOKIE", 11:"KEEPALIVE", 12:"PADDING", 13:"CHAIN", 14:"KEYTAG", 15:"ERROR", 16:"CLIENTTAG", 17:"SERVERTAG", 20292:"UMBRELLA", 26946:"DEVICEID" }
 });
 
 // Encode the given number to two bytes (16 bit)
@@ -123,6 +147,7 @@ function encode_packet( packet ) {
   packet.additional.forEach( function(adtnl) {
     encoded = Buffer.concat( [ encoded, gen_resource_record(packet, adtnl.name, adtnl.type, adtnl.class, adtnl.ttl, adtnl.rdata)] );
   });
+  encoded = Buffer.concat( [ encoded, gen_edns_options(packet) ] ); // EDNS options (a special additional record of dns_type.OPT)
   return encoded;
 }
 
@@ -327,17 +352,21 @@ function gen_resource_record(packet, name, type, clss, ttl, rdata) {
     RDATA variable length string
   **/
 
-  var resource
+  var resource;
   var record = "";
 
-  if ( name == packet.question.name ) {
+  if ( type == dns_type.OPT ) {
+    // skip EDNS here - it should be triggered already in the calling function
+    return Buffer.alloc(0);
+  }
+  else if ( name == packet.question.name ) {
     // The name matches the query, set a compression pointer.
     resource = Buffer.from([192, 12]);
   } else {
     // gen labels for the name
     resource = encode_label(name);
   }
-  
+
   resource = Buffer.concat( [ resource, Buffer.from([ type & 0xff00, type & 0xff ]) ]);
   switch(type) {
     case dns_type.A:
@@ -416,10 +445,16 @@ function parse_resource_record(packet, decode_level) {
       } else {
         switch(resource.type) {
           case dns_type.A:
-            resource.rdata = parse_arpa_v4(packet, resource);
+            resource.rdata = parse_arpa_v4(
+              packet.data.slice(packet.offset, packet.offset + resource.rdlength)
+	    );
+            packet.offset += resource.rdlength;
             break;
           case dns_type.AAAA:
-            resource.rdata = parse_arpa_v6(packet, resource);
+            resource.rdata = parse_arpa_v6(
+              packet.data.slice(packet.offset, packet.offset + resource.rdlength)
+	    );
+            packet.offset += resource.rdlength;
             break;
           case dns_type.NS:
             resource.rdata = parse_label(packet);
@@ -449,6 +484,13 @@ function parse_resource_record(packet, decode_level) {
   return resource;
 }
 
+function is_ipv4(ip) {
+  // Determine if IP is IPv4 (true) or IPv6 (false)
+  const segments = ip.split('\.');
+  return (segments.length == 4 &&
+          segments.every(s => (s >= 0 && s <= 255)));
+}
+
 function encode_arpa_v4( ipv4 ) {
   var rdata = Buffer.alloc(4);
   var index = 0;
@@ -458,29 +500,46 @@ function encode_arpa_v4( ipv4 ) {
   return rdata;
 }
 
-function parse_arpa_v4(packet) {
+function parse_arpa_v4(rdata) {
   var octet = [0,0,0,0];
-  for (var i=0; i< 4 ; i++ ) {
-    octet[i] = packet.data[packet.offset++];
+  for (var i=0; i < rdata.length; i++ ) {
+    octet[i] = rdata[i];
   }
   return octet.join(".");
 }
 
 function encode_arpa_v6( ipv6 ) {
   var rdata = Buffer.alloc(0);
+  // expand :: to up to 7 : separators
+  const n = 7 - ipv6.match(/:/g).length;
+  ipv6 = ipv6.replace('::', ':'.repeat(n + 2));
   ipv6.split(':').forEach( function(segment) {
+    while ( segment.length < 4 ) {
+      segment = "0" + segment;
+    }
     rdata = Buffer.concat( [ rdata, Buffer.from( segment[0] + segment[1], 'hex') ] );
     rdata = Buffer.concat( [ rdata, Buffer.from( segment[2] + segment[3], 'hex') ] );
   });
   return rdata;
 }
 
-function parse_arpa_v6(packet) {
+function parse_arpa_v6(rdata) {
   var ipv6 = "";
-  for (var i=0; i<8; i++ ) {
-    ipv6 += packet.data.toString('hex', packet.offset++, ++packet.offset) + ":";
+  var segment;
+  for ( var i = 0; i < rdata.length; i += 2 ) {
+    segment = rdata.toString('hex', i, i + 2);
+    if ( segment.length <= 2 ) {
+      // padding for sparse subnet (i.e. /120)
+      segment += "00";
+    }
+    ipv6 += segment + ":";
   }
-  return ipv6.slice(0,-1);
+  if ( rdata.length <= 112 ) {
+    ipv6 += ":";
+  } else {
+    ipv6 = ipv6.slice(0, -1);
+  }
+  return ipv6;
 }
 
 function encode_txt_record( text_array ) {
@@ -568,46 +627,112 @@ function parse_soa_record(packet) {
 
 function parse_edns_options(packet) {
 
-  packet.edns = {}
-  packet.edns.opts = {}
-  packet.edns.size = packet.data.readUInt16BE(packet.offset);
-  packet.edns.rcode = packet.data[packet.offset+2];
-  packet.edns.version = packet.data[packet.offset+3];
-  packet.edns.z = packet.data.readUInt16BE(packet.offset+4);
-  packet.edns.rdlength = packet.data.readUInt16BE(packet.offset+6);
+  /**
+    NAME                                    '' (name: root)
+    TYPE (2 bytes)                          41 (type: OPT)
+    UDP payload size (2 bytes)              .. (UDP payload size)
+    EDNS rcode (1 byte)                     0
+    ENDS version (1 byte)                   0
+    RESERVED 16bit                          0
+    RDLength 16bit int length of RDATA
+    RDATA variable length string containing 0, 1 or multiple
+      . OPCODE (2 bytes)
+      . OPLENGTH (2 bytes)
+      . OPDATA (variable length)
+  **/
+
+  packet.edns = {
+    opts: {},
+    size: packet.data.readUInt16BE(packet.offset),
+    rcode: packet.data[packet.offset+2],
+    version: packet.data[packet.offset+3],
+    z: packet.data.readUInt16BE(packet.offset+4),
+    rdlength: packet.data.readUInt16BE(packet.offset+6)
+  };
   packet.offset += 8;
 
-  var end = packet.offset + packet.edns.rdlength;
-  for ( ; packet.offset < end ; ) {
+  const end = packet.offset + packet.edns.rdlength;
+  while ( packet.offset < end ) {
     var opcode = packet.data.readUInt16BE(packet.offset);
     var oplength = packet.data.readUInt16BE(packet.offset+2);
     packet.offset += 4;
-    if ( opcode == 8 ) {
-      //client subnet
-      packet.edns.opts.csubnet = {}
-      packet.edns.opts.csubnet.family = packet.data.readUInt16BE(packet.offset);
-      packet.edns.opts.csubnet.netmask = packet.data[packet.offset+2];
-      packet.edns.opts.csubnet.scope = packet.data[packet.offset+3];
-      packet.offset += 4;
-      if ( packet.edns.opts.csubnet.family == 1 ) {
-        // IPv4
-        var octet = [0,0,0,0];
-        for (var i=4; i< oplength ; i++ ) {
-          octet[i-4] = packet.data[packet.offset++];
-        }
-        packet.edns.opts.csubnet.subnet = octet.join(".");
-        break;
-      } else {
-        // We don't support IPv6 yet.
-        packet.edns.opts = {}
-        break;
-      }
+    if ( opcode == edns_opcode.CSUBNET ) {
+      // CSUBNET
+      const _family = packet.data.readUInt16BE(packet.offset);
+      const parse_arpa = (_family == 1 ? parse_arpa_v4 : parse_arpa_v6);
+      packet.edns.opts.csubnet = {
+        family: _family,
+        netmask: packet.data[packet.offset+2],
+        scope: packet.data[packet.offset+3],
+        subnet: parse_arpa(
+          packet.data.slice(packet.offset+4, packet.offset+oplength)
+        )
+      };
     } else {
-      // We only look for CSUBNET... Not interested in anything else at this time.
-      packet.offset += oplength;
+    // COOKIE etc.
+      packet.edns.opts[edns_opcode.value[opcode].toLowerCase()] = {
+        opdata: packet.data.slice(packet.offset, packet.offset + oplength)
+      };
     }
+    packet.offset += oplength;
   }
-
 }
 
+function gen_edns_options(packet) {
 
+  /**
+    NAME                                    '' (name: root)
+    TYPE (2 bytes)                          41 (type: OPT)
+    UDP payload size (2 bytes)              .. (UDP payload size)
+    EDNS rcode (1 byte)                     0
+    ENDS version (1 byte)                   0
+    RESERVED 16bit                          0
+    RDLength 16bit int length of RDATA
+    RDATA variable length string containing 0, 1 or multiple
+      . OPCODE (2 bytes)
+      . OPLENGTH (2 bytes)
+      . OPDATA (variable length)
+  **/
+
+  if ( 'edns' in packet ) {
+    let rdata = Buffer.alloc(0);
+    if ( 'csubnet' in packet.edns.opts ) {
+      const encode_arpa = (
+        packet.edns.opts.csubnet.family == 1 ?
+        encode_arpa_v4 :   // IPv4
+	encode_arpa_v6);   // IPv6
+      const csubnet = Buffer.concat([
+        to_bytes( packet.edns.opts.csubnet.family ),        // i.e. 1  (IPv4)
+        Buffer.from([ packet.edns.opts.csubnet.netmask ]),  // i.e. 24 (/24)
+        Buffer.from([ packet.edns.opts.csubnet.scope ]),    // i.e. 0
+        encode_arpa(packet.edns.opts.csubnet.subnet).slice(
+          0,
+          Math.ceil(packet.edns.opts.csubnet.netmask/8)
+        )                                                   // i.e. 10.2.3.x (hex, truncated to netmask)
+      ]);
+      rdata = Buffer.concat([ rdata,
+        to_bytes(edns_opcode.CSUBNET),
+        to_bytes(csubnet.length),
+        csubnet
+      ]);
+    }
+    if ( 'cookie' in packet.edns.opts ) {
+      rdata = Buffer.concat([ rdata,
+        to_bytes(edns_opcode.COOKIE),
+        to_bytes(packet.edns.opts.cookie.opdata.length),
+        packet.edns.opts.cookie.opdata
+      ]);
+    }
+    // TODO: treat other OPCODEs
+    return Buffer.concat([
+      Buffer.from([0]),
+      to_bytes(dns_type.OPT),
+      to_bytes(packet.edns.size || 1232),
+      Buffer.from([packet.edns.rcode || 0]),
+      Buffer.from([packet.edns.version || 0]),
+      to_bytes(packet.edns.z || 0),
+      to_bytes(rdata.length),
+      rdata
+    ]);
+  }
+}
