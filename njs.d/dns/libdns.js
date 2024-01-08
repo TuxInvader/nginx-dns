@@ -533,7 +533,6 @@ function encode_srv_record( srv ) {
   rdata.writeInt16BE( srv.weight, 2 );
   rdata.writeInt16BE( srv.port, 4 );
   rdata = Buffer.concat( [ rdata, encode_label( srv.target ) ]);
-  ngx.log( ngx.WARN, rdata.toString('hex'));
   return rdata;
 }
 
